@@ -15,13 +15,12 @@ import { runAkRole, type CliResult, type NamedRoleTurnHostAdapter } from "../../
 import type { CliIo } from "../../src/public-cli/cli-io.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { readRoleRunIdentity } from "../../src/public-cli/run-lifecycle.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { listBookRunDirectories, sessionFileOf } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines, type TicketProgressLine } from "../../src/ticket-progress.ts";
-import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { readSectionSync } from "../../src/run-dossier.ts";
 import {
   argvFlagValue,
@@ -69,12 +68,6 @@ type Observation = {
   rows(seat: string): TicketProgressLine[];
   readonly ticketDirectory: string;
 };
-
-/** Package faults noted beside a kept conclusion in one session. */
-async function sessionFaultNotes(sessionFile: string): Promise<number> {
-  return (await readFile(sessionFile, "utf8")).split("\n").filter(Boolean)
-    .filter((line) => (JSON.parse(line) as { customType?: unknown }).customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE).length;
-}
 
 async function runJudge(
   officerRunner: LegacyFauxPiRunner,
@@ -341,12 +334,12 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     await rm(receipts);
     await rename(`${receipts}.saved`, receipts);
     // A fault about the audited leg is noted on that leg: its log, or its session first.
-    const notes = async () => runLogPayloads(observed.parentRunDirectory, "post-admission-diagnostic").length
-      + await sessionFaultNotes(sessionFileOf(observed.parentRunDirectory));
-    const before = await notes();
+    const notes = () => runLogPayloads(observed.parentRunDirectory, "post-admission-diagnostic").length
+      + sessionFaultNotes(sessionFileOf(observed.parentRunDirectory)).length;
+    const before = notes();
     notaryFails = true;
     assert.equal((await observed.resumeSeat("notary", RULING)).exitCode, 1);
-    assert.equal(await notes(), before);
+    assert.equal(notes(), before);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 
@@ -526,7 +519,7 @@ test.each(["undecidable", "host failure", "unreadable audited leg"])("#1214 R2b:
     if (mode === "unreadable audited leg") {
       // The true cause is noted on the officer's own session beside its kept conclusion.
       const officerSession = observed.officerSessions.filter((item) => item.role === "auditor").at(-1)!.sessionFile;
-      assert.equal(await sessionFaultNotes(officerSession), 1);
+      assert.equal(sessionFaultNotes(officerSession).length, 1);
       return;
     }
     assert.deepEqual(runLogPayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),

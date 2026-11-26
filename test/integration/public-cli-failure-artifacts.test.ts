@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -20,7 +20,6 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/packag
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import {
   publishFailureTerminal,
   settleHostEndedNoReceipt,
@@ -79,13 +78,7 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
     );
     const artifactNote = runLogPayloads<{ diagnostic?: unknown }>(runDirectory, "post-admission-diagnostic")
       .some((body) => typeof body.diagnostic === "string");
-    const sessionText = await readFile(sessionFileOf(runDirectory), "utf8");
-    const sessionNote = sessionText.split("\n").some((line) => {
-      if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) return false;
-      const entry = JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } };
-      return entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
-        && typeof entry.data?.diagnostic === "string";
-    });
+    const sessionNote = sessionFaultNotes(sessionFileOf(runDirectory)).some((note) => typeof note.diagnostic === "string");
     assert.equal(artifactNote || sessionNote, true);
   });
 });
@@ -162,13 +155,7 @@ test("terminal write failure is noted beside the host failure terminal and does 
       assert.equal(recorded[0]!.face, "error");
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
       // The refused write is a note beside the host terminal, in the run's session.
-      const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-        .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-        ?.data?.diagnostic;
+      const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
       assert.equal(typeof noteText, "string");
     } finally {
       if (currentJson !== undefined) {
@@ -313,13 +300,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     assert.deepEqual(outcomes, []);
     assert.equal(terminalBodyAt(join(sealedRunDirectory, "current.json"), "report").role, "judge");
     const liveSessionFile = sessionFileOf(sealedRunDirectory);
-    const noteText = (await readFile(liveSessionFile, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-      .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-      ?.data?.diagnostic;
+    const noteText = sessionFaultNotes(liveSessionFile)[0]?.diagnostic;
     assert.equal(typeof noteText, "string");
   });
 });

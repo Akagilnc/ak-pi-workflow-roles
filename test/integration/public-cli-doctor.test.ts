@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, sessionFaultNotes, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -30,7 +30,6 @@ import {
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 
@@ -785,13 +784,7 @@ test(mode === "rows"
       assert.deepEqual(statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
     }
-    const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-      .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-      ?.data?.diagnostic;
+    const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
     assert.equal(typeof noteText, "string");
     assert.ok((await readRecordedSubmissionRows(project, runId, home)).rows.some((row) => row.kind === "accepted"));
   });
