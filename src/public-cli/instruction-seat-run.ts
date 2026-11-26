@@ -215,17 +215,20 @@ async function presentUnsettledVolume(
 
 /**
  * #1214 A5/A12/F1: audit incomplete and no officer volume is presentable.
- * Present parent original; surface diagnostic; do not forge accepted success.
+ * Present parent original; the gate's own cause goes through the package-fault
+ * outlet (ADR 0080), so a failed write never replaces it or the result; this
+ * layer's stderr stays its channel. Do not forge accepted success.
  */
 async function incompleteAuditWithoutOfficerVolume(
   turn: SeatRunResult,
   admitted: AdmittedRoleInvocation,
+  env: InstructionSeatRunEnv,
   io: CliIo,
   diagnostic: string,
   carried?: SeatRunResult["alongside"],
 ): Promise<SeatRunResult> {
   const alongside = await presentAlongside(turn, carried, io);
-  io.stderr(diagnostic);
+  await packageFaultNoteFor(admitted, env, { stderr: io.stderr })(diagnostic);
   return { exitCode: 1, admitted, alongside };
 }
 
@@ -1275,6 +1278,7 @@ async function auditSubmittedRole(
         return incompleteAuditWithoutOfficerVolume(
           turn,
           admitted,
+          env,
           io,
           "doctor audit kept an unreadable reply with no terminal",
         );
@@ -1293,7 +1297,7 @@ async function auditSubmittedRole(
           && typeof decision.diagnostic === "string"
           ? decision.diagnostic
           : `doctor audit did not converge: ${decision.status}`;
-        return incompleteAuditWithoutOfficerVolume(turn, admitted, io, diagnostic);
+        return incompleteAuditWithoutOfficerVolume(turn, admitted, env, io, diagnostic);
       }
     }
   } else {
@@ -1371,6 +1375,7 @@ async function auditSubmittedRole(
       return incompleteAuditWithoutOfficerVolume(
         turn,
         admitted,
+        env,
         io,
         pass.reason
           ?? (pass.status === "transport_failure"
@@ -1389,6 +1394,7 @@ async function auditSubmittedRole(
         return incompleteAuditWithoutOfficerVolume(
           turn,
           admitted,
+          env,
           io,
           "escalated audit has no resumable run identity",
         );

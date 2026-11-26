@@ -1836,7 +1836,7 @@ export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, auth
   }
   if ("terminal" in prepared) return publishSeatSettlement(admitted, authority, scope, prepared);
   if (typeof scope.seal === "object" && (scope.seal.receipt !== undefined || prepared.rows.length > 0)) {
-    io?.stderr(formatCliDiagnostic(`无法定位被审原卷：${admitted.runDirectory}（${scope.seal.receipt ?? "未记录受审稿引用"}）`));
+    await noteSettlementFault(admitted.runDirectory, scope, `无法定位被审原卷：${admitted.runDirectory}（${scope.seal.receipt ?? "未记录受审稿引用"}）`);
   }
   return undefined;
 }

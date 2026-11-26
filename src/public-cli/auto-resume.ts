@@ -322,6 +322,8 @@ export async function runWithAutoResumeLoop<
   }> = [];
   let stoppedResult: T | undefined;
   let endReason: string | undefined;
+  // A failed write of a diagnostic never replaces the cause or result in hand (ADR 0080).
+  const note = packageFaultNoteFor(options.admitted, options, options.io);
 
   while (true) {
     let result: T | undefined;
@@ -351,31 +353,28 @@ export async function runWithAutoResumeLoop<
       failedAttempts.push(failedAttempt);
       turnStartedBeforeThrow = error instanceof TurnDispatchedFailure;
       const attempt = dispatchOrdinal;
-      try {
-        // Track the file as soon as it is durably written (#426 review):
-        // a pointer-stage failure comes back separately (pointerError) and must
-        // never orphan the retained file (#426 fix_now #5).
-        const { file, pointerError } = await retainDispatchError(
-          options.admitted,
-          options.principalAuthority,
-          options.sessionAppender,
-          attempt,
-          error,
-        );
-        retainedErrorFiles.push(file);
-        failedAttempt.errorFile = file;
-        options.io.stderr(
-          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}\n`,
-        );
-        if (pointerError !== undefined) {
-          options.io.stderr(
-            `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}\n`,
-          );
+      // Track the file as soon as it is durably written (#426 review):
+      // a pointer-stage failure comes back separately (pointerError) and must
+      // never orphan the retained file (#426 fix_now #5).
+      const retained = await retainDispatchError(
+        options.admitted,
+        options.principalAuthority,
+        options.sessionAppender,
+        attempt,
+        error,
+      ).catch(async (retentionError: unknown) => {
+        await note(`dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}`);
+        return undefined;
+      });
+      if (retained !== undefined) {
+        retainedErrorFiles.push(retained.file);
+        failedAttempt.errorFile = retained.file;
+        await besidePresentation(options.admitted.runDirectory, options.io, "dispatch error pointer", () => options.io.stderr(
+          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${retained.file}\n`,
+        ));
+        if (retained.pointerError !== undefined) {
+          await note(`dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retained.pointerError)}`);
         }
-      } catch (retentionError) {
-        options.io.stderr(
-          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}\n`,
-        );
       }
     }
     dispatchOrdinal += 1;
@@ -434,7 +433,6 @@ export async function runWithAutoResumeLoop<
   }
 
   // The loop's own terminal is in hand: finishing steps keep it (ADR 0080).
-  const note = packageFaultNoteFor(options.admitted, options, options.io);
   let terminal = stoppedResult?.terminal;
   if (stoppedResult === undefined) {
     const exception = dispatchExceptionFailureTerminal({
