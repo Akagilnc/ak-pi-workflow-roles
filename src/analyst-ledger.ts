@@ -12,7 +12,7 @@
  * A2: classifyScopedRun retains typed per-run facts (frame span, tool intervals,
  * terminal face) for metric-family modules — no longer discarded after checks.
  */
-import { readPageSync } from "./run-dossier.ts";
+import { pageFromRows, readPageSync, readStateControlRowsSync } from "./run-dossier.ts";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -154,14 +154,15 @@ async function listLedgerBookNames(booksRoot: string): Promise<string[]> {
 async function readInvocationScopeFields(
   runDirectory: string,
 ): Promise<InvocationScopeFields | undefined> {
-  const parsed = readPageSync(runDirectory, "invocation");
+  const rows = readStateControlRowsSync(runDirectory);
+  const parsed = pageFromRows(rows, "invocation", runDirectory);
   if (parsed === undefined) return undefined;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return undefined;
   }
   const projectRoot = parsed.projectRoot;
   // Display/history placement: board first, then migration-derived (#852).
-  const ticketNumber = await readRunTicketNumber(runDirectory);
+  const ticketNumber = await readRunTicketNumber(runDirectory, rows);
   if (ticketNumber !== undefined) {
     return { projectRoot, ticketNumber };
   }

@@ -5,7 +5,7 @@
  * without forging a board assertion. Missing page (ENOENT) → try next / undefined;
  * damage and non-ENOENT IO failures propagate.
  */
-import { readPageSync } from "./run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync } from "./run-dossier.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -112,25 +112,20 @@ async function readJsonObject(
   }
 }
 
-function readBoardPageTicketNumberFromRows(
-  runDirectory: string,
-  section: "admitted" | "invocation",
-): number | undefined {
-  const fromRows = readPageSync(runDirectory, section);
-  return fromRows === undefined ? undefined : ticketFromRecord(fromRows);
-}
-
 /**
- * Board-only ticketNumber from fact rows (admitted → invocation).
+ * Board-only ticketNumber from fact rows (admitted → invocation), from one read of
+ * state.jsonl; a caller that already holds the leg's control rows passes them.
  * Public / production identity paths use this sole projection — never legacy pages.
  */
 export async function readBoardTicketNumber(
   runDirectory: string,
+  rows: readonly Record<string, unknown>[] = readStateControlRowsSync(runDirectory),
 ): Promise<number | undefined> {
-  return (
-    readBoardPageTicketNumberFromRows(runDirectory, "admitted") ??
-    readBoardPageTicketNumberFromRows(runDirectory, "invocation")
-  );
+  const ticketOf = (section: "admitted" | "invocation") => {
+    const page = pageFromRows(rows, section, runDirectory);
+    return page === undefined ? undefined : ticketFromRecord(page);
+  };
+  return ticketOf("admitted") ?? ticketOf("invocation");
 }
 
 /** Worktree-derivation ticket only — never a board assertion. */
@@ -154,9 +149,10 @@ async function readMigrationDerivedTicketNumber(
  */
 export async function readRunTicketNumber(
   runDirectory: string,
+  rows?: readonly Record<string, unknown>[],
 ): Promise<number | undefined> {
   return (
-    (await readBoardTicketNumber(runDirectory)) ??
+    (await readBoardTicketNumber(runDirectory, rows)) ??
     (await readMigrationDerivedTicketNumber(runDirectory))
   );
 }

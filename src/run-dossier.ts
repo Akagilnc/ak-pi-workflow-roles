@@ -73,12 +73,17 @@ function lastPayloadOfKind(rows: readonly Record<string, unknown>[], kind: strin
   return undefined;
 }
 
-/** Last whole-page payload as an object, or undefined when absent; illegal values throw. */
-function lastPagePayload(
+/**
+ * One whole-page section from already-read control rows: the last row's page as an
+ * object, or undefined when absent; illegal values throw. A caller that needs several
+ * pages of one leg reads `readStateControlRowsSync` once and asks this per page.
+ */
+export function pageFromRows(
   rows: readonly Record<string, unknown>[],
-  kind: string,
+  section: CurrentSection,
   runDirectory: string,
 ): Record<string, unknown> | undefined {
+  const kind = PAGE_ROW_KIND[section];
   const payload = lastPayloadOfKind(rows, kind);
   if (payload === undefined) return undefined;
   if (!isRecord(payload)) {
@@ -147,7 +152,7 @@ export function readStateControlRowsSync(runDirectory: string): readonly Record<
  * keeps its failure identity; it is not filtered into absence.
  */
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
-  return lastPagePayload(readStateControlRowsSync(runDirectory), PAGE_ROW_KIND[section], runDirectory);
+  return pageFromRows(readStateControlRowsSync(runDirectory), section, runDirectory);
 }
 
 /**

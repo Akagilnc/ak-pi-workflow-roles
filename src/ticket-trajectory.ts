@@ -18,7 +18,7 @@
  * write does not advertise refresh. Regeneration faults surface the original
  * cause via handle.closed / stop(). Caller stops the handle.
  */
-import { readPageSync } from "./run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync } from "./run-dossier.ts";
 import { lstat, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -270,7 +270,9 @@ type InvocationInfo = {
 
 async function readInvocation(runDir: string): Promise<InvocationInfo | undefined> {
   try {
-    const parsed = readPageSync(runDir, "invocation");
+    // One read of the leg's state rows serves both the invocation page and its ticket.
+    const rows = readStateControlRowsSync(runDir);
+    const parsed = pageFromRows(rows, "invocation", runDir);
     if (parsed === undefined) return undefined;
     const info: InvocationInfo = {};
     if (typeof parsed.role === "string" && parsed.role.trim()) info.role = parsed.role.trim();
@@ -293,7 +295,7 @@ async function readInvocation(runDir: string): Promise<InvocationInfo | undefine
       info.correlationId = parsed.correlationId;
     }
     // Display placement: board pages first, then migration-derived (never forges board).
-    const ticketNumber = await readRunTicketNumber(runDir);
+    const ticketNumber = await readRunTicketNumber(runDir, rows);
     if (ticketNumber !== undefined) info.ticketNumber = ticketNumber;
     return info;
   } catch (error) {
