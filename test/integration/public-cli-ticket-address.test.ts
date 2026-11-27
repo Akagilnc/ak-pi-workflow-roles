@@ -15,7 +15,6 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
-import { tryParseUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type CliResult } from "../../src/public-cli/cli.ts";
 import { runDirectoryOfSessionFile } from "../../src/role-run-placement.ts";
@@ -40,8 +39,6 @@ type Turn = {
   readonly leg: string;
   readonly sessionFile: string;
   readonly args: readonly string[];
-  /** The first sentence the seat received. */
-  readonly prompt?: string | undefined;
 };
 
 /** What a scripted turn does: submit these details, or end with no receipt. */
@@ -93,7 +90,6 @@ async function withTicketProject(
               leg: basename(runDirectoryOfSessionFile(argvFlagValue(args, "--session")!)),
               sessionFile: argvFlagValue(args, "--session")!,
               args: [...args],
-              ...(options.stdin === undefined ? {} : { prompt: tryParseUserDialogueStdin(options.stdin)?.body }),
             };
             turns.push(turn);
             const details = script(turn);
@@ -300,8 +296,8 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     assert.equal(join(ticketDirectory, "runs", turns.at(-1)!.leg), legB);
 
     // Leg A files a later receipt. A round in the locator only finds the leg; a direct
-    // call reviews that leg's latest arrival — the pin and the officer's progress row.
-    // A caller's dispatch passes as-is (ADR 0085).
+    // call reviews that leg's latest arrival — the pin and the officer's progress row,
+    // with or without a caller's dispatch (ADR 0085).
     await call(["resume", String(TICKET), "judge#1"], () => ruling({ later: true }));
     const forOf = (seat: string) => readTicketProgressLines(ticketDirectory).filter((row) => row.seat === seat).at(-1)?.for;
     const pinned = () => readCurrentSection(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted").auditedReceipt;
@@ -312,7 +308,6 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     const inspected = await call(["new", "inspector", "--model", SEAT_MODEL, "--source-run", `${TICKET}:judge#1`, dispatch],
       () => ({ status: "converged" }));
     assert.equal(inspected.exitCode, 0);
-    assert.equal(turns.at(-1)!.prompt, dispatch);
     assert.equal(forOf("inspector"), "judge#3");
 
     // A path locator, unreadable ledger: the leg's files still locate its latest arrival,
