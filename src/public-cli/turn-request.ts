@@ -80,6 +80,7 @@ export type RoleTurnRequestProjectionOptions = {
 
 export type AdmittedTurnInvocation = {
   principal?: DurablePrincipal;
+  auditedRound?: string | undefined;
   projectRoot?: string;
   repoRoot?: string;
   cwd?: string;
@@ -103,6 +104,7 @@ export function projectRoleTurnRequest(
   // birth model. Resume and new legs share this projection.
   return {
     principal: admitted.principal,
+    ...(admitted.auditedRound && { auditedRound: admitted.auditedRound }),
     activation: roleDetails.activation,
     methods: roleDetails.methods ?? [],
     continuation: options.continuation,

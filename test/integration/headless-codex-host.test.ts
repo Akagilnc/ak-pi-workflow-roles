@@ -720,7 +720,7 @@ process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + 
       if (scenario === "history-unwritable") {
         assert.equal(starts, 1);
         assert.equal(delivered, 0);
-        assert.equal(packageFaultNotes(root).length > 0, true, "the lost turn-delivery row is noted");
+        assert.equal((packageFaultNotes(root) as Array<{ diagnostic?: unknown }>).some((note) => typeof note.diagnostic === "string" && note.diagnostic !== ""), true, "the lost turn-delivery row is noted");
       } else {
         assert.equal(delivered, starts, "one turn-delivery row per CLI start");
         const handed = (await readFile(join(root, "handed.jsonl"), "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line));

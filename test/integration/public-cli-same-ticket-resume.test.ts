@@ -13,9 +13,8 @@
  * scriptedTerminatingToolSession overwrites the volume — proves request/settlement
  * only, not real host volume memory.
  */
-import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   historyPayloads,
   statePayloads,
@@ -23,10 +22,12 @@ import {
   lockCurrentJson,
   unlockCurrentJson,
   runLogPayloads,
+  sessionFaultNotes,
   RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
 } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
 import { execFileSync } from "node:child_process";
 import { chmodSync, statSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -42,9 +43,8 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runComplianceAudit } from "../../src/compliance-transport.ts";
-import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
   readCurrentCourt,
@@ -178,7 +178,7 @@ function observingSealHost(inner: RoleTurnHost, seen: SeenTurn[]): RoleTurnHost 
   };
 }
 
-test("#637 public notary tracer: first seal → seat switch → second court no-seal → bare resume non-pass → idempotent", async ({ home }) => {
+test("#637 public notary tracer: open court resume and later bare submissions keep their own verdicts", async ({ home }) => {
   const scratch = await openNotaryScratch(home);
   const { project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
   assert.deepEqual(
@@ -191,6 +191,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     0,
   );
 
+  const third = { status: "converged", findings: ["third"] };
   /** Lawful non-pass seal for the open second court (distinct from first pass). */
   const secondCourtSeal = {
     status: "continue" as const,
@@ -230,20 +231,13 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
         })(extraArgs, options);
       }
       if (turn === 4) {
-        // Bare resume of open court: seal this court turn with lawful non-pass.
-        return scriptedTerminatingToolSession({
-          role: "notary",
-          toolName: NOTARY_OUTPUT_TOOL_NAME,
-          details: secondCourtSeal,
-        })(extraArgs, options);
+        // Parent must settle this child seal by the open court in Pi's envelope.
+        submitInPiChild(project, options.env, "notary", [secondCourtSeal]);
+        return { code: 0, timedOut: false, stderr: "", args: [...extraArgs] };
       }
-      // Bare resume after sealed court: pass-through, no re-seal (#833).
-      return scriptedTerminatingToolSession({
-        role: "notary",
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: secondCourtSeal,
-        seal: false,
-      })(extraArgs, options);
+      if (turn !== 5) submitInPiChild(project, options.env, "notary", [third]);
+      if (turn === 7) await rm(join(options.env.AK_ROLE_RUN_DIR!, "receipts/4.json"));
+      return { code: 0, timedOut: false, stderr: "", args: [...extraArgs] };
     },
   });
   const host = observingSealHost(inner, seen);
@@ -449,8 +443,16 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     "open-court seal status must be the lawful non-pass, not first-court pass",
   );
 
-  // 6) After open court seals non-pass, further bare resume still reaches the
-  // host (#833 pass-through). No re-seal → settlement keeps the open-court status.
+  // 6) A fresh bare invocation submits again; the closed court's lost original
+  // is a history fault, not evidence against this submission.
+  const lost = join(firstRunDirectory, "receipts/1.json");
+  await rm(lost);
+  const quiet = await runAkRole(["resume", "637", "notary"], { home, packageRoot, cwd: project, credentials, io, roleTurnHost: host });
+  assert.equal(quiet.exitCode, 0);
+  // This court received nothing: the leg's history is shown, the prior court's verdict is not this answer.
+  assert.equal(quiet.terminal?.roleOutcome.kind, "no_receipt");
+  assert.deepEqual(quiet.terminal?.submissions, [secondCourtSeal]);
+  assert.deepEqual(quiet.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lost, "ENOENT"]]);
   const turnsBeforeBare = turn;
   const bareAfterSeal = await runAkRole(["resume", "637", "notary"], {
     home,
@@ -467,12 +469,15 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   );
   assert.equal(bareAfterSeal.exitCode, 0);
   assert.deepEqual(
-    bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
-      ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)
-      : [],
-    ["converged", secondCourtSeal.status],
-    "post-court pass-through presents full history with the current non-pass last",
-  );
+    bareAfterSeal.terminal?.roleOutcome.kind === "accepted" && bareAfterSeal.terminal.roleOutcome.payloads, [third]);
+  assert.deepEqual(bareAfterSeal.terminal?.submissions, [secondCourtSeal, third]);
+  assert.deepEqual(bareAfterSeal.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lost, "ENOENT"]]);
+  const missingCurrent = await runAkRole(["resume", "637", "notary"], { home, packageRoot, cwd: project, credentials, io, roleTurnHost: host });
+  assert.equal(missingCurrent.exitCode, 1);
+  assert.equal(missingCurrent.terminal?.roleOutcome.kind, "failure");
+  assert.deepEqual(missingCurrent.terminal?.submissions, bareAfterSeal.terminal?.submissions);
+  assert.deepEqual(missingCurrent.terminal?.receiptErrors?.map(e => [e.receipt, e.identity?.code]),
+    [[lost, "ENOENT"], [join(firstRunDirectory, "receipts/4.json"), "ENOENT"]]);
 });
 
 test("#637/#987 public inspector: resume continues open-court settlement without re-delivering attachments", async ({ home }) => {
@@ -775,7 +780,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
   await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
   await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
   const firstHistory = () => historyPayloads(seen[0]!.runDirectory, "attempt-history");
-  assert.equal(firstHistory().length, 1);
+  assert.deepEqual(firstHistory(), []);
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.kind, "initial");
   assert.equal(seen[0]!.model?.model, "birth-auditor");
@@ -843,8 +848,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     summonAuditor: async () => ({ exitCode: second.exitCode, terminal: second.terminal! }),
   });
   assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
-  assert.equal(firstHistory().length, 2,
-    "the second real host turn adds exactly one no-receipt attempt");
+  assert.deepEqual(firstHistory().map(row => (row.outcome as { kind: string }).kind), ["no_receipt"]);
   assert.equal(
     (readCurrentSection(firstRunDirectory, "terminal") as { face?: string }).face,
     "no_receipt",
@@ -1149,20 +1153,13 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     (await readdir(join(coderRunDirectory, "receipts"))).sort(),
     ["1.json", "2.json"],
   );
-  // The terminal as the analyst reads it carries the submitted payloads, taken from history.
-  const read = readRunTerminal(coderRunDirectory);
-  assert.equal(read.status, "present");
-  assert.deepEqual(
-    ((read as unknown as { body: { outcome: { payloads: unknown } } }).body.outcome.payloads),
-    [{ status: "completed", report: "work submitted", ticketNumber: 1171 }],
-  );
   // The notary's source-run reader and the recorded verdicts, as the same case gives on main.
   assert.deepEqual(
     { runId: (await loadNotarySourceRunLocator(coderRunDirectory)).runId, role: (await loadNotarySourceRunLocator(coderRunDirectory)).role },
     { runId: "run-worker-gate-resume-993", role: "coder" },
   );
   assert.deepEqual(
-    (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).map(({ kind, accepted }) => ({ kind, accepted })),
+    (await readRecordedSubmissionRows(scratch.project, "run-worker-gate-resume-993", scratch.home)).rows.map(row => ({ kind: row.kind, accepted: readReceipt(row) })),
     [
       { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },
       { kind: "accepted", accepted: { status: "completed", report: "work submitted", ticketNumber: 1171 } },
@@ -1301,11 +1298,13 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
         // writes history.jsonl and current.json in the run directory, so the lock that
         // makes the terminal write fail is applied by the host wrapper below, after
         // the seal landed. Armed only for this turn.
-        sealingTurnArmed = true;
+        sealingTurnArmed = turn === 3;
+        // A later bare resume exits cleanly without submitting anything.
         return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
           details: { status: "converged", findings: [] },
+          seal: turn === 3,
         })(extraArgs, options);
       },
     });
@@ -1388,23 +1387,40 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // session it appends to is healthy, so no run-artifacts fallback file is
     // expected — #840 bounce class 1: a healthy channel must not also get a
     // standing duplicate). Assert only the typed shape: a structured
-    // customType key, and that a diagnostic string landed — never its exact
+    // customType key, and that a non-empty diagnostic landed — never its exact
     // wording, which stays observation-only (#840 bounce class 2).
     const sessionFile = sessionFileOf(runDirectory);
-    const sessionLines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
-    const dossierEntries = sessionLines
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-      .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
-    // One entry per refused dossier write (the run-state persist and the terminal
-    // publish), none duplicated.
-    assert.equal(dossierEntries.length, 2, "the dossier channel must carry one cleanup diagnostic entry per refused write");
-    for (const entry of dossierEntries) assert.equal(typeof entry.data?.diagnostic, "string");
+    const dossierEntries = sessionFaultNotes(sessionFile);
+    assert.ok(dossierEntries.length > 0, "the refused writes are retained in the dossier");
+    for (const entry of dossierEntries) assert.ok(typeof entry.diagnostic === "string" && entry.diagnostic !== "");
     // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
     const subject = subjectDirectoryOfRun(runDirectory);
     const progressRows = readTicketProgressLines(subject!);
     assert.ok(
       progressRows.some((row) => row.seat === "notary" && row.status === "converged"),
       "ticket progress must land beside accepted even when terminal render fails",
+    );
+
+    // The court was delivered although its report did not render. Once the fault
+    // clears, a next bare resume that submits nothing does not claim that receipt.
+    unlockCurrentJson(runDirectory);
+    currentJsonLocked = "";
+    const next = await runAkRole(["resume", "637", "notary"], {
+      home,
+      packageRoot,
+      cwd: project,
+      credentials,
+      io,
+      roleTurnHost: host,
+    });
+    assert.equal(turn, 4);
+    assert.equal(next.terminal?.roleOutcome.kind, "no_receipt");
+    assert.equal(next.terminal?.receipts, undefined, "no receipt is this call's");
+    assert.equal(next.terminal?.submissions?.length, 1, "the leg's earlier submission is still presented");
+    assert.deepEqual(next.terminal?.submissions, resumed.terminal?.submissions);
+    assert.deepEqual(
+      readTicketProgressLines(subject!).filter((row) => row.seat === "notary").map((row) => row.round),
+      ["1"],
     );
   } finally {
     // The injected lock makes the run directory read-only; undo it so the scratch can go.

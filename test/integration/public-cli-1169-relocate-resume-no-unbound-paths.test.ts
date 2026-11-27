@@ -118,9 +118,8 @@ async function sealTerminatingTurn(input: {
     details: input.details,
     toolCallId: input.toolCallId,
     // #1199 J3: this-turn seal must tag the live courtAttemptId.
-    ...(input.request.courtAttemptId === undefined
-      ? {}
-      : { courtAttemptId: input.request.courtAttemptId }),
+    ...(input.request.courtAttemptId && { courtAttemptId: input.request.courtAttemptId }),
+    ...(input.request.invocationScopeId && { invocationScopeId: input.request.invocationScopeId }),
   });
 }
 

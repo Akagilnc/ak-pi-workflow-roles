@@ -145,6 +145,9 @@ export type AdmittedRoleInvocationBase = {
    * (ADR 0049 host channel). Admission does not mint ticket-binding ids.
    */
   readonly correlationId?: string;
+  /** Receipt this call was admitted to review, independent of later re-summons. */
+  auditedReceipt?: string | undefined;
+  auditedRound?: string | undefined;
   /** Direct callers retained across same-run resumes, in first-observed order. */
   readonly correlationIds?: readonly string[];
   /**
@@ -193,7 +196,7 @@ export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "auditor";
-  /** Audited source-run directory (#1166 identity / ADR 0085 peer-body load). */
+  /** Audited source-run directory (#1166 identity). */
   readonly sourceRunPath?: string;
 };
 
@@ -488,6 +491,7 @@ export function persistAdmittedAuditedLeg(
   runDirectory: string,
   audited: {
     readonly for: string | undefined;
+    readonly auditedReceipt?: string | undefined;
     readonly sourceRunPath?: string;
     readonly auditorSubject?: "judge" | "doctor" | undefined;
   },
@@ -506,50 +510,19 @@ export function persistAdmittedAuditedLeg(
         `persistAdmittedAuditedLeg refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
       );
     }
-    const unchanged = current.for === audited.for
+    const unchanged = current.auditedReceipt === audited.auditedReceipt && current.for === audited.for
       && (sourceRunPath === undefined || current.sourceRunPath === sourceRunPath)
       && (auditorSubject === undefined || current.auditorSubject === auditorSubject);
     if (unchanged) return undefined;
-    const { for: _replaced, ...rest } = current;
+    const { for: _replaced, auditedReceipt: _priorSeal, ...rest } = current;
     return {
       ...rest,
       ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
       ...(auditorSubject === undefined ? {} : { auditorSubject }),
       ...(audited.for === undefined ? {} : { for: audited.for }),
+      ...(audited.auditedReceipt && { auditedReceipt: audited.auditedReceipt }),
     };
   });
-}
-
-/**
- * #1195 option 1: record the parent sealed toolCallId this officer is reviewing
- * on the officer's own admitted-request (one field). Re-summons for a newer seal
- * replace the value; continueParentAfterChild only trusts a child whose field
- * matches the parent seal currently under audit.
- */
-export function persistAdmittedAuditedSubmissionToolCallId(
-  runDirectory: string,
-  auditedSubmissionToolCallId: string,
-): void {
-  const id = auditedSubmissionToolCallId.trim();
-  if (id === "") {
-    throw new Error("persistAdmittedAuditedSubmissionToolCallId requires a non-empty id");
-  }
-  // Offline gate mocks may return a runDirectory without admission — skip, do not invent.
-  if (readPageSync(runDirectory, "admitted") === undefined) return;
-  updateSectionSync(runDirectory, "admitted", (current) => {
-    if (current.auditedSubmissionToolCallId === id) return undefined;
-    return { ...current, auditedSubmissionToolCallId: id };
-  });
-}
-
-/** Read the sealed id this officer admitted-request last recorded (#1195). */
-export function readAdmittedAuditedSubmissionToolCallId(
-  runDirectory: string,
-): string | undefined {
-  const page = readPageSync(runDirectory, "admitted");
-  if (page === undefined) return undefined;
-  const id = page.auditedSubmissionToolCallId;
-  return typeof id === "string" && id.trim() !== "" ? id : undefined;
 }
 
 /**
@@ -669,6 +642,7 @@ export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
+  publishedRounds?: Map<string, string>,
 ): Promise<RunDirectoryRelocation | undefined> {
   if (admitted.ticketNumber === undefined) return undefined;
 
@@ -676,9 +650,7 @@ export async function relocateAdmittedRunToTicket(
 
   // Already under the ticket: publish leftover progress.jsonl (self + registered children).
   if (!isUnboundRunDirectory(admitted.runDirectory)) {
-    relocateTicketProgressForLeg({
-      runDirectory: admitted.runDirectory,
-    });
+    relocateTicketProgressForLeg({ runDirectory: admitted.runDirectory }, publishedRounds);
     if (admitted.role !== "diarist") {
       await relocateRegisteredChildDiarists({
         parentRunDirectory: admitted.runDirectory,
@@ -729,23 +701,18 @@ export async function relocateAdmittedRunToTicket(
   // the ticket leaf; final seal uses the post-move existence landing.
   heldLease?.relocate(target.runDirectory);
 
-  const actualSessionDirectory = sessionDirectoryOf(target.runDirectory);
-  const principal = authority.seal({
-    sessionDirectory: actualSessionDirectory,
-    sessionFile: sessionFileIn(actualSessionDirectory),
-  });
-
   rewriteAdmittedRoleRunPage(
     admitted as unknown as Record<string, unknown>,
     oldRunDirectory,
     target.runDirectory,
   );
-  (admitted as { principal: DurablePrincipal }).principal = principal;
+  const actualSessionDirectory = sessionDirectoryOf(target.runDirectory);
+  (admitted as { principal: DurablePrincipal }).principal = authority.seal({
+    sessionDirectory: actualSessionDirectory, sessionFile: sessionFileIn(actualSessionDirectory),
+  });
 
   // After whole-leg rename + live-handle handoff: fill rounds and append ticket current.
-  relocateTicketProgressForLeg({
-    runDirectory: target.runDirectory,
-  });
+  relocateTicketProgressForLeg({ runDirectory: target.runDirectory }, publishedRounds);
 
   // current.json projects host.original from this run directory. Ownership is
   // already transferred; a refuse still carries the true cause to the caller
@@ -1971,7 +1938,7 @@ export function appendCallerFileFlagPaths(
  * One initial prompt transport. The registry `transportPrompt` leaf selects
  * a bound baseline or skill args. Absent means the caller instruction plus
  * caller file-flag paths (ADR 0087). Notary dialogue is owned by
- * resolveReviewSeatDialogueBody (review fixed dispatch), not an empty transport leaf.
+ * resolveReviewSeatDialogueBody (receipt address), not an empty transport leaf.
  * Engine / outsourcing material rides startup readingMaterial (#1167), not here.
  */
 export function buildInstructionTransportPrompt(

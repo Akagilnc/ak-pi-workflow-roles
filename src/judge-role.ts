@@ -1,5 +1,4 @@
 import { type RoleHost } from "./host-contracts.ts";
-import { REVIEW_QUEUE_STATUSES, type ReviewQueueWord } from "./review-submission.ts";
 import { registerFiledSubmissionTool } from "./filed-submission.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import { type GatekeeperSubject } from "./gatekeeper-role.ts";
@@ -7,7 +6,7 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
-import type { TerminalResult } from "./public-cli/terminal.ts";
+import type { SubmissionGateOutcome } from "./submission-gate.ts";
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
@@ -18,92 +17,15 @@ export const JUDGE_GATES: readonly GatekeeperSubject[] = [
   { kind: "judge_compliance" },
 ];
 
-export type JudgeGateStatus = ReviewQueueWord | "needs_reask" | "transport_failure" | "no_receipt";
-
 export async function runJudgeGates(input: {
-  readonly gateAlreadyConverged: (subject: GatekeeperSubject) => Promise<boolean>;
-  readonly runGate: (
-    subject: GatekeeperSubject,
-  ) => Promise<{
-    readonly status?: unknown;
-    readonly receipt?: unknown;
-    readonly runId?: string;
-    readonly runDirectory?: string;
-    readonly terminal?: TerminalResult;
-    readonly reason?: string;
-  } | void>;
-}): Promise<{
-  readonly status: JudgeGateStatus;
-  readonly passes: readonly {
-    readonly subject: GatekeeperSubject;
-    readonly status: JudgeGateStatus;
-    readonly receipt: unknown;
-    readonly runId?: string;
-    readonly runDirectory?: string;
-    readonly terminal?: TerminalResult;
-    readonly reason?: string;
-  }[];
-}> {
-  const passes: {
-    subject: GatekeeperSubject;
-    status: JudgeGateStatus;
-    receipt: unknown;
-    runId?: string;
-    runDirectory?: string;
-    terminal?: TerminalResult;
-    reason?: string;
-  }[] = [];
+  readonly gateAlreadyConverged: (subject: GatekeeperSubject) => boolean;
+  readonly runGate: (subject: GatekeeperSubject) => Promise<SubmissionGateOutcome>;
+}): Promise<SubmissionGateOutcome | undefined> {
   for (const subject of JUDGE_GATES) {
-    if (await input.gateAlreadyConverged(subject)) continue;
+    if (input.gateAlreadyConverged(subject)) continue;
     const pass = await input.runGate(subject);
-    const received = pass?.status;
-    if (pass === undefined || (
-      typeof received !== "string"
-      || (!REVIEW_QUEUE_STATUSES.has(received)
-        && received !== "needs_reask"
-        && received !== "transport_failure"
-        && received !== "no_receipt")
-    )) {
-      // #1214 A12: do not convert missing/unreadable gate conclusion into a
-      // parent-killing throw. Surface needs_reask so callers present honestly.
-      return {
-        status: "needs_reask",
-        passes: [{
-          subject,
-          status: "needs_reask",
-          receipt: pass?.receipt ?? { reason: "judge gate returned no conclusion" },
-          ...(pass?.runId === undefined ? {} : { runId: pass.runId }),
-          ...(pass?.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
-          ...(pass?.terminal === undefined ? {} : { terminal: pass.terminal }),
-        }],
-      };
-    }
-    const status = received as JudgeGateStatus;
-    if (status === "needs_reask" || status === "transport_failure" || status === "no_receipt") {
-      return {
-        status,
-        passes: [{
-          subject,
-          status,
-          receipt: pass.receipt,
-          ...(pass.runId === undefined ? {} : { runId: pass.runId }),
-          ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
-          ...(pass.terminal === undefined ? {} : { terminal: pass.terminal }),
-          ...(pass.reason === undefined ? {} : { reason: pass.reason }),
-        }],
-      };
-    }
-    passes.push({
-      subject,
-      status,
-      receipt: pass.receipt,
-      ...(pass.runId === undefined ? {} : { runId: pass.runId }),
-      ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
-      ...(pass.terminal === undefined ? {} : { terminal: pass.terminal }),
-    });
-    if (status === "continue" || status === "escalate") return { status, passes };
+    if (pass.status !== "converged") return pass;
   }
-  return { status: "converged", passes };
 }
 
 // #836 r16 class 1: fix/classes/note/decisionGate are LLM/human-read narrative

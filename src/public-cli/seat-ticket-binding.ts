@@ -5,6 +5,9 @@
 import { join } from "node:path";
 
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import type { PublicSummonResult } from "../public-role-summons.ts";
+import { presentSeatVolume } from "./auto-resume.ts";
+import { discardStdout, type CliIo } from "./cli-io.ts";
 import {
   autopsyWriterLock,
   findLatestRunForSeatTicket,
@@ -15,20 +18,6 @@ import {
 } from "./run-lifecycle.ts";
 
 const SESSION_ID_MISSING = "session-id-missing";
-
-function resumedSessionIdMissing(result: unknown, runId: string): boolean {
-  if (typeof result !== "object" || result === null) return false;
-  const terminal = (result as { terminal?: unknown }).terminal;
-  if (typeof terminal !== "object" || terminal === null) return false;
-  // The failure belongs to the resumed leg, not to another seat presented in its place.
-  if ((result as { admitted?: { runId?: unknown } }).admitted?.runId !== runId) return false;
-  const outcome = (terminal as { roleOutcome?: unknown }).roleOutcome;
-  if (typeof outcome !== "object" || outcome === null) return false;
-  if ((outcome as { kind?: unknown }).kind !== "failure") return false;
-  const facts = (outcome as { decisiveFacts?: unknown }).decisiveFacts;
-  if (typeof facts !== "object" || facts === null) return false;
-  return (facts as { errorCode?: unknown }).errorCode === SESSION_ID_MISSING;
-}
 
 /** Live or unverifiable holder: same fail-closed verdict as lease acquire. */
 async function writerLockBlocksFreshSummons(runDirectory: string): Promise<boolean> {
@@ -48,8 +37,9 @@ async function writerLockBlocksFreshSummons(runDirectory: string): Promise<boole
  * blank parent path, or no prior run. freshSummons is required so no seat can
  * drift back into its own skip branch.
  */
-export async function tryResumeSameTicketSeatRun<T>(input: {
+export async function tryResumeSameTicketSeatRun(input: {
   readonly home: string;
+  readonly io: CliIo;
   readonly projectRoot: string;
   readonly role: RoleRunRecord["role"];
   readonly parentRunPath: string;
@@ -60,8 +50,8 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
     runId: string,
     summons: SameTicketSummonsMaterials | undefined,
     runDirectory: string,
-  ) => Promise<T>;
-}): Promise<T | undefined> {
+  ) => Promise<PublicSummonResult>;
+}): Promise<PublicSummonResult | undefined> {
   if (input.freshSummons === true) return undefined;
   if (input.parentRunPath.trim() === "") return undefined;
   const bookKey = resolveBookKeyFromGit(input.projectRoot);
@@ -74,8 +64,12 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
   });
   if (previous === undefined) return undefined;
   const resumed = await input.resume(previous.runId, input.summons, previous.runDirectory);
-  if (!resumedSessionIdMissing(resumed, previous.runId)) return resumed;
+  const outcome = resumed.terminal?.roleOutcome;
+  if (resumed.admitted?.runId !== previous.runId || outcome?.kind !== "failure"
+    || outcome.decisiveFacts.errorCode !== SESSION_ID_MISSING) return resumed;
   const live = await resolveLiveRunDirectoryPath(previous.runDirectory, input.home, bookKey);
   if (live !== undefined && await writerLockBlocksFreshSummons(live)) return resumed;
+  // Direct resume already presented this volume; a quiet summon never will.
+  if (input.io.stdout === discardStdout) await presentSeatVolume(resumed, input.io, "discarded");
   return undefined;
 }

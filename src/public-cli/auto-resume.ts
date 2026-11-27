@@ -26,21 +26,23 @@ import {
 } from "./run-lifecycle.ts";
 import { parseAutoResumeLimit } from "./config.ts";
 import { processCancelSignalName } from "./process-cancel.ts";
-import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
+import { isLawfulTypedTerminalOutcome, formatTerminalResult, receiptErrorRows, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
+  besideConclusion,
+  besidePresentation,
   filedIdentity,
-  presentFailureTerminal,
-  retainPackageFault,
+  packageFaultNoteFor,
+  presentFailureDiagnostic,
 } from "./settlement.ts";
 
-import type { CliIo } from "./cli-io.ts";
+import { discardStdout, type CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
 import { errorText } from "../unknown-value.ts";
 
-const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
+const dummyIo: CliIo = { stdout: discardStdout, stderr: discardStdout };
 
 /**
  * Persist run-state after a host-turn result, outside the retried dispatch try.
@@ -52,41 +54,30 @@ export async function persistReturnedRunState(
   await markRunTerminal(admitted.runDirectory);
 }
 
-export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, held?: readonly string[]): Promise<void> {
-  try {
-    if (held !== undefined) {
-      for (const value of held) io.stdout(value);
-    } else if (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt") {
-      presentFailureTerminal(terminal, io);
-    } else {
-      io.stdout(formatTerminalResult(terminal));
-    }
-  } catch (error) {
-    // Presentation consumes a settled report; it never reopens dispatch or
-    // replaces the host's cause, identity or open details.
-    await retainPackageFault({
-      runDirectory,
-      diagnostic: `terminal presentation failed beside host terminal: ${describeErrorIdentity(error)}`,
-      error,
-      stderr: (text) => io.stderr(text),
-    });
-  }
+// A quiet caller can still deliver a returned volume; only the other two stay here.
+type VolumeDelivery = "returned" | "alongside" | "discarded";
+
+export async function presentSeatVolume(
+  seat: Pick<import("../public-role-summons.ts").PublicSummonResult, "terminal" | "admitted" | "runDirectory"> | undefined,
+  io: CliIo, delivery: VolumeDelivery,
+): Promise<void> {
+  if (!seat?.terminal || (delivery === "discarded" && !seat.terminal.receiptErrors?.length)) return;
+  const dir = seat.admitted?.runDirectory ?? seat.runDirectory;
+  if (dir) await presentTerminal(seat.terminal, { ...io, omitFailureStderrDiagnostic: true }, dir, delivery);
 }
 
-/**
- * Best-effort finalization of the durable run state before an exception-path
- * synthetic failure terminal is returned (#426 review: analyst-ledger classifies
- * running runs as live — an exhausted invocation must not remain live
- * indefinitely). Finalization failure must not mask the real cause.
- */
-async function finalizeExceptionRunBestEffort(runDirectory: string, io: CliIo): Promise<void> {
-  try {
-    await markRunTerminal(runDirectory);
-  } catch (error) {
-    io.stderr(
-      `run terminal-state finalization failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
-    );
-  }
+export async function presentTerminal(terminal: TerminalResult, io: CliIo, runDirectory: string, delivery: VolumeDelivery = "returned"): Promise<void> {
+  // Presentation consumes a settled report; it never reopens dispatch or
+  // replaces the host's cause, identity or open details.
+  await besidePresentation(runDirectory, io, "terminal presentation", () => {
+    if (delivery !== "discarded" && io.stdout !== discardStdout) io.stdout(formatTerminalResult(terminal));
+    else if (delivery !== "returned") {
+      for (const row of receiptErrorRows(terminal)) (io.callerDiagnostic ?? io.stderr)(`${row}\n`);
+    }
+    if (delivery !== "discarded" && io.stderr !== discardStdout && (terminal.roleOutcome.kind === "failure" || terminal.roleOutcome.kind === "no_receipt")) {
+      presentFailureDiagnostic(terminal, io);
+    }
+  });
 }
 
 export type AutoResumeDispatchResult = {
@@ -216,33 +207,6 @@ function unwrapTurnDispatchedFailure(error: unknown): unknown {
   return current;
 }
 
-async function attachDispatchExceptionTerminal(
-  admitted: {
-    readonly runDirectory: string;
-    readonly runId: string;
-    readonly projectRoot: string;
-  },
-  terminal: TerminalResult,
-  io: CliIo,
-): Promise<TerminalResult> {
-  try {
-    return await attachRecordedSubmissions(
-      {
-        projectRoot: admitted.projectRoot,
-        runId: admitted.runId,
-        runDirectory: admitted.runDirectory,
-      },
-      terminal,
-    );
-  } catch (error) {
-    // Existing diagnostic seam: attach true cause on stderr, original Terminal stays.
-    io.stderr(
-      `dispatch exception ledger attach failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
-    );
-    return terminal;
-  }
-}
-
 /**
  * Typed failure terminal for a retry path that ended with only exceptions:
  * loud, non-lawful, carrying the last true cause and the pointers to the
@@ -358,6 +322,8 @@ export async function runWithAutoResumeLoop<
   }> = [];
   let stoppedResult: T | undefined;
   let endReason: string | undefined;
+  // A failed write of a diagnostic never replaces the cause or result in hand (ADR 0080).
+  const note = packageFaultNoteFor(options.admitted, options, options.io);
 
   while (true) {
     let result: T | undefined;
@@ -387,31 +353,28 @@ export async function runWithAutoResumeLoop<
       failedAttempts.push(failedAttempt);
       turnStartedBeforeThrow = error instanceof TurnDispatchedFailure;
       const attempt = dispatchOrdinal;
-      try {
-        // Track the file as soon as it is durably written (#426 review):
-        // a pointer-stage failure comes back separately (pointerError) and must
-        // never orphan the retained file (#426 fix_now #5).
-        const { file, pointerError } = await retainDispatchError(
-          options.admitted,
-          options.principalAuthority,
-          options.sessionAppender,
-          attempt,
-          error,
-        );
-        retainedErrorFiles.push(file);
-        failedAttempt.errorFile = file;
-        options.io.stderr(
-          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}\n`,
-        );
-        if (pointerError !== undefined) {
-          options.io.stderr(
-            `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}\n`,
-          );
+      // Track the file as soon as it is durably written (#426 review):
+      // a pointer-stage failure comes back separately (pointerError) and must
+      // never orphan the retained file (#426 fix_now #5).
+      const retained = await retainDispatchError(
+        options.admitted,
+        options.principalAuthority,
+        options.sessionAppender,
+        attempt,
+        error,
+      ).catch(async (retentionError: unknown) => {
+        await note(`dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}`);
+        return undefined;
+      });
+      if (retained !== undefined) {
+        retainedErrorFiles.push(retained.file);
+        failedAttempt.errorFile = retained.file;
+        await besidePresentation(options.admitted.runDirectory, options.io, "dispatch error pointer", () => options.io.stderr(
+          `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${retained.file}\n`,
+        ));
+        if (retained.pointerError !== undefined) {
+          await note(`dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retained.pointerError)}`);
         }
-      } catch (retentionError) {
-        options.io.stderr(
-          `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}\n`,
-        );
       }
     }
     dispatchOrdinal += 1;
@@ -426,7 +389,7 @@ export async function runWithAutoResumeLoop<
     // already-settled result) or the original non-lawful result unchanged.
     if (result !== undefined) {
       everyAttemptThrew = false;
-      const terminal = (result as { terminal?: TerminalResult }).terminal;
+      const terminal = result.terminal;
       if (terminal !== undefined) {
         (terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
         if (terminal.roleOutcome.kind === "failure") {
@@ -445,6 +408,7 @@ export async function runWithAutoResumeLoop<
         stoppedResult = result;
         break;
       }
+      if (terminal) await presentTerminal(terminal, options.io, options.admitted.runDirectory, "discarded");
     } else {
       if (autoResumeAttempts >= limit) {
         endReason = "auto-resume budget exhausted";
@@ -468,23 +432,21 @@ export async function runWithAutoResumeLoop<
     }
   }
 
-  const terminal = stoppedResult === undefined
-    ? await attachDispatchExceptionTerminal(
-        options.admitted,
-        dispatchExceptionFailureTerminal({
-          role: options.admitted.role,
-          runDirectory: options.admitted.runDirectory,
-          causeError: lastThrownError,
-          errorFiles: retainedErrorFiles,
-          autoResumeAttempts,
-          endReason: endReason!,
-          everyAttemptThrew,
-        }),
-        options.io,
-      )
-    : stoppedResult.terminal;
+  // The loop's own terminal is in hand: finishing steps keep it (ADR 0080).
+  let terminal = stoppedResult?.terminal;
   if (stoppedResult === undefined) {
-    await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+    const exception = dispatchExceptionFailureTerminal({
+      role: options.admitted.role,
+      runDirectory: options.admitted.runDirectory,
+      causeError: lastThrownError,
+      errorFiles: retainedErrorFiles,
+      autoResumeAttempts,
+      endReason: endReason!,
+      everyAttemptThrew,
+    });
+    terminal = await attachRecordedSubmissions(options.admitted, exception);
+    // An exhausted invocation must not stay live (#426); finalization never masks the cause.
+    await besideConclusion(note, "run terminal-state finalization", () => markRunTerminal(options.admitted.runDirectory));
   }
   const complete: TerminalResult | undefined = terminal !== undefined && failedAttempts.length > 0
     ? { ...terminal, roleOutcome: {
@@ -492,7 +454,8 @@ export async function runWithAutoResumeLoop<
       decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
     } } as TerminalResult
     : terminal;
-  if (complete !== undefined) {
+  // The seat selects its accepted volume after routing; other stops are final here.
+  if (complete !== undefined && complete.roleOutcome.kind !== "accepted") {
     await presentTerminal(complete, options.io, options.admitted.runDirectory);
   }
   return stoppedResult === undefined

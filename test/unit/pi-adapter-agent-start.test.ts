@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionContext, ExtensionToolContext, ToolDefiniti
 import { Type } from "typebox";
 
 import type { RoleEnvelopeHost } from "../../src/host-contracts.ts";
-import { projectNotaryAuditedRunIdentity } from "../../src/notary-role.ts";
+import { auditedRunIdentityMaterial } from "../../src/audited-run-identity.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -64,20 +64,8 @@ function piCapture() {
 }
 
 test("Pi adapter folds consecutive startup callbacks into provider systemPrompt and strips readingMaterial", async () => {
-  const bound = projectNotaryAuditedRunIdentity({
-    sourceRun: {
-      runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
-      runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
-      role: "judge",
-    },
-  });
-  const otherBound = projectNotaryAuditedRunIdentity({
-    sourceRun: {
-      runDirectory: "/tmp/01a034f1-75bf-71a6-bcf5-d1299145b1a5@coder",
-      runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
-      role: "coder",
-    },
-  });
+  const bound = auditedRunIdentityMaterial("01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge");
+  const otherBound = auditedRunIdentityMaterial("01a034f1-75bf-71a6-bcf5-d1299145b1a5@coder");
   const bare = piCapture();
   const bareAdapter = createPiRoleHostAdapter(bare.pi);
   bareAdapter.host.on("before_agent_start", (event) => ({ systemPrompt: event.systemPrompt }));

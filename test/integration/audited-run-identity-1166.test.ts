@@ -1,7 +1,7 @@
 /**
- * #1166 — four audit seats share audited-run identity `<runId>@<席>` in startup
- * materials; first utterance stays the peer submission bytes from this-round ledger.
- * Navigator prompt stays caller bytes.
+ * #1166 / ADR 0085 — four audit seats share audited-run identity `<runId>@<席>`
+ * and the receipt under review in startup materials; the package never relays
+ * that receipt's body as the officer's first utterance.
  *
  * Seam: public `ak-role` + in-repo fake host (same createMinimalHost shape for
  * judge / coder / secretariat parents). prepareRoleEnvelope only reads the live
@@ -26,7 +26,6 @@ import type {
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
-import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
@@ -231,16 +230,15 @@ function parentGateHost(input: {
       role: input.parentRole,
       details: input.details,
       toolCallId: `${input.parentRole}-1166`,
-      ...(request.courtAttemptId === undefined
-        ? {}
-        : { courtAttemptId: request.courtAttemptId }),
+      ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+      ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
     });
     return { code: 0, stderr: "", timedOut: false };
   });
   return withNestedTrueUnboundDiarist(inner, { primaryRole: input.parentRole });
 }
 
-test("#1166 public gate: four seats share identity; peer reviewers receive ledger payloads", async () => {
+test("#1166 public gate: four seats share identity and this court's receipt; no body relay", async () => {
   await withTempRoot("ak-1166-gate-four-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -333,13 +331,11 @@ test("#1166 public gate: four seats share identity; peer reviewers receive ledge
       );
       for (const request of capture) {
         const inspected = await inspectLiveRequest(request, packageRoot);
-        if (request.activation.role === "notary") {
-          assert.notEqual(inspected.prompt, readableGateItem(gate.details));
-        } else {
-          assert.deepEqual(JSON.parse(inspected.prompt), gate.details);
-        }
         assert.equal(inspected.identities.length, 1);
         assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
+        // The officer is pointed at this court's receipt, never handed its body.
+        assert.equal(readCurrentSection(request.runDirectory, "admitted").auditedReceipt, "1.json");
+        assert.notEqual(inspected.prompt, "");
         if (gate.expectedIdentity !== undefined) {
           assert.deepEqual(inspected.identities[0], {
             kind: AUDITED_RUN_IDENTITY_KIND,
@@ -366,12 +362,12 @@ test("#1166 public gate: four seats share identity; peer reviewers receive ledge
   });
 });
 
-test("#1166 direct notary/auditor public entry: same identity; auditor receives latest peer body", async () => {
+test("#1166 direct notary/auditor public entry: same identity, latest arrived receipt, no body relay", async () => {
   await withTempRoot("ak-1166-direct-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    await configureOfficerSeats(home, ["notary", "auditor"]);
+    await configureOfficerSeats(home, ["notary", "auditor", "inspector"]);
     const parentRun = await seedCanonicalSourceRun(home, project);
     const expectedIdentity = identityFromParent(parentRun);
     assert.equal(
@@ -409,11 +405,19 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
       executeError: new WorkerUnfinishedReasonReminderError(),
     });
 
+    const DISPATCH = "审：本 run 是否合规。";
     for (const seat of [
       {
         role: "notary" as const,
         argv: ["notary", "--model", "test/caller-seat:high", "--source-run", parentRun],
         runId: "01a0116600007000800000000000dn01",
+      },
+      // A caller's own dispatch names the receipt itself and passes through as-is (ADR 0085 / 0087).
+      {
+        role: "inspector" as const,
+        argv: ["inspector", "--model", "test/caller-seat:high", "--source-run", parentRun, DISPATCH],
+        runId: "01a0116600007000800000000000di01",
+        dispatch: DISPATCH,
       },
       {
         role: "auditor" as const,
@@ -428,33 +432,41 @@ test("#1166 direct notary/auditor public entry: same identity; auditor receives 
         ],
         runId: "01a0116600007000800000000000da01",
       },
-    ]) {
+      // Same-parent re-summons of that auditor leg, now with a dispatch.
+      {
+        role: "auditor" as const,
+        argv: ["auditor", "--model", "test/caller-seat:high", "--subject", "judge", "--source-run", parentRun, DISPATCH],
+        runId: "01a0116600007000800000000000da02",
+        dispatch: DISPATCH,
+      },
+    ] as Array<{ role: "notary" | "inspector" | "auditor"; argv: string[]; runId: string; dispatch?: string }>) {
       let inspected: Awaited<ReturnType<typeof inspectLiveRequest>> | undefined;
+      let pinned: unknown;
+      const log = captureIo();
       const result = await runAkRole(seat.argv, {
         packageRoot,
         home,
         cwd: project,
         createRunId: () => seat.runId,
-        io: captureIo().io,
+        io: log.io,
         credentials: CREDENTIALS,
         roleTurnHost: createMinimalHost(async (request) => {
           assert.equal(request.activation.role, seat.role);
           // Observe startup while the turn is live, before ticket binding moves it.
           inspected = await inspectLiveRequest(request, packageRoot);
+          pinned = readCurrentSection(request.runDirectory, "admitted").auditedReceipt;
           return officerSealHost(seat.role).executeTurn(request);
         }),
       });
-      assert.equal(result.exitCode, 0, JSON.stringify(result));
+      assert.equal(result.exitCode, 0, log.stderr.join("\n"));
       assert.ok(inspected);
       assert.deepEqual(inspected.identities[0], {
         kind: AUDITED_RUN_IDENTITY_KIND,
         auditedRun: expectedIdentity,
       });
-      if (seat.role === "notary") {
-        assert.notEqual(inspected.prompt, readableGateItem(current));
-      } else {
-        assert.deepEqual(JSON.parse(inspected.prompt), current);
-      }
+      // The latest arrived draft (J10) is under review, not the earlier seal; a caller's dispatch passes as-is.
+      assert.equal(pinned, "2.json");
+      if (seat.dispatch !== undefined) assert.equal(inspected.prompt, seat.dispatch);
     }
   });
 });
@@ -479,6 +491,7 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
     };
     const runId = "01a0119500007000800000000000c001";
     const notaryPrompts: string[] = [];
+    const notaryReceipts: unknown[] = [];
     const notaryIdentities: string[] = [];
     let parentSeals = 0;
     let countersignRequired: string[] | undefined;
@@ -487,7 +500,7 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
       if (request.activation.role === "notary") {
         // Structured face on the live request before envelope fold.
         notaryPrompts.push(request.continuation.prompt);
-        assert.notEqual(request.continuation.prompt, readableGateItem(parentSeals === 1 ? first : second));
+        notaryReceipts.push(readCurrentSection(request.runDirectory, "admitted").auditedReceipt);
         const inspected = await inspectLiveRequest(request, packageRoot);
         assert.equal(inspected.identities.length, 1);
         assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);
@@ -543,9 +556,8 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
         role: "countersign",
         details: body,
         toolCallId: `countersign-1195-${parentSeals}`,
-        ...(request.courtAttemptId === undefined
-          ? {}
-          : { courtAttemptId: request.courtAttemptId }),
+        ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
       });
       return { code: 0, stderr: "", timedOut: false };
     });
@@ -587,8 +599,10 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
 
     assert.ok(notaryPrompts.length >= 2, "same parent must re-summon notary");
     assert.notDeepEqual(first, second);
-    assert.equal(notaryPrompts[0], notaryPrompts.at(-1));
     assert.equal(notaryIdentities.at(-1), formatRunLeaf(runId, "countersign"));
+    // The re-summoned officer is pointed at this round's receipt, not the earlier seal, in its resumed dialogue too.
+    assert.deepEqual([notaryReceipts[0], notaryReceipts.at(-1)], ["1.json", "2.json"]);
+    assert.notEqual(notaryPrompts.at(-1), notaryPrompts[0]);
 
     // #1195: 给事中 public final holds this leg only; 符宝郎 table stays on its own run.
     assert.ok(finalResult.terminal, "public final terminal must exist");

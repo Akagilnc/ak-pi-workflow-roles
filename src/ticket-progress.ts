@@ -38,7 +38,7 @@ import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
-import { errorText, isRecord } from "./unknown-value.ts";
+import { errnoCode, errorText, isRecord } from "./unknown-value.ts";
 
 const CURRENT_FILENAME = "current.jsonl" as const;
 const RECEIPTS_DIRNAME = "receipts" as const;
@@ -153,18 +153,38 @@ function nextRoundFromLines(
   return want === undefined ? String(base) : `${base}.${want}`;
 }
 
-/** Leg-local receipt ordinal: `receipts/<n>.json` (not seat#round). */
-function nextLegReceiptIndex(runDirectory: string): number {
+function receiptReference(runDirectory: string, file: string): string {
+  return `runs/${basename(runDirectory)}/${RECEIPTS_DIRNAME}/${file}`;
+}
+
+/** Includes originals whose writer stopped before recording even a candidate. */
+export function legReceiptReferences(runDirectory: string): string[] {
   const dir = join(runDirectory, RECEIPTS_DIRNAME);
-  if (!existsSync(dir)) return 1;
-  let max = 0;
-  for (const name of readdirSync(dir)) {
-    const match = /^(\d+)\.json$/.exec(name);
-    if (match === null) continue;
-    const n = Number(match[1]);
-    if (Number.isSafeInteger(n) && n > max) max = n;
+  try {
+    return readdirSync(dir).filter(name => /^[1-9]\d*\.json$/.test(name)).map(name => receiptReference(runDirectory, name));
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return [];
+    throw error;
   }
-  return max + 1;
+}
+
+export function writeArrivingReceipt(runDirectory: string, original: unknown): string {
+  const directory = join(runDirectory, RECEIPTS_DIRNAME);
+  mkdirSync(directory, { recursive: true });
+  const text = `${JSON.stringify(original, null, 2)}\n`;
+  const last = legReceiptReferences(runDirectory).reduce((max, receipt) => {
+    const n = BigInt(basename(receipt, ".json"));
+    return n > max ? n : max;
+  }, 0n);
+  for (let n = last + 1n; ; n++) {
+    const file = `${n}.json`;
+    try {
+      writeFileSync(join(directory, file), text, { flag: "wx" });
+      return receiptReference(runDirectory, file);
+    } catch (error) {
+      if (errnoCode(error) !== "EEXIST") throw error;
+    }
+  }
 }
 
 /**
@@ -172,7 +192,7 @@ function nextLegReceiptIndex(runDirectory: string): number {
  * summary is seat-authored prose on the receipt.
  * Missing fields stay absent — never invent "" or "accepted".
  */
-function statusAndSummaryFromPayload(payload: unknown): {
+export function statusAndSummaryFromPayload(payload: unknown): {
   readonly status?: string;
   readonly summary?: string;
 } {
@@ -187,13 +207,12 @@ function statusAndSummaryFromPayload(payload: unknown): {
 }
 
 /**
- * #1200「审 谁#轮」as the ticket has it now: the audited leg's latest row. Read
- * at the officer's admission, before the officer runs. An audited leg with no
- * round yet (unbound, or no accepted receipt) has none. A progress file that
- * cannot be read or has malformed rows has none either and returns the cause
- * for the caller to retain — the officer still runs.
+ * #1200「审 谁#轮」at officer admission: the row of the receipt under review,
+ * found by its name. A receipt with no row (unbound, or never accepted) has no
+ * round. A progress file that cannot be read or has malformed rows has none
+ * either and returns the cause for the caller to retain — the officer still runs.
  */
-export function readAuditedRound(auditedRunDirectory: string): {
+export function readAuditedRound(auditedRunDirectory: string, receiptName: string): {
   readonly for?: string;
   readonly fault?: string;
 } {
@@ -205,9 +224,9 @@ export function readAuditedRound(auditedRunDirectory: string): {
     if (malformed.length > 0) {
       throw new Error(`${path} has malformed row(s): ${malformed.join("; ")}`);
     }
-    const receipts = `runs/${basename(auditedRunDirectory)}/`;
-    const latest = lines.filter((line) => line.receipt.startsWith(receipts)).at(-1);
-    return latest === undefined ? {} : { for: `${latest.seat}#${latest.round}` };
+    const ref = receiptReference(auditedRunDirectory, receiptName);
+    const row = lines.filter(line => line.receipt === ref).at(-1);
+    return row === undefined ? {} : { for: `${row.seat}#${row.round}` };
   } catch (error) {
     return { fault: `audited round unavailable for ${auditedRunDirectory}: ${errorText(error)}` };
   }
@@ -217,9 +236,9 @@ export function readAuditedRound(auditedRunDirectory: string): {
  * The row's `for`: gate officers copy the admission pin; the fixer's receipt
  * reports its own (copied when it is a string, never checked). No other seat has one.
  */
-function forOfSealedRow(runDirectory: string, seat: string, payload: unknown): string | undefined {
+function forOfSealedRow(auditedRound: string | undefined, seat: string, payload: unknown): string | undefined {
   const reported = packagedGateStageLabel(seat) !== undefined
-    ? readPageSync(runDirectory, "admitted")?.for
+    ? auditedRound
     : seat === "fixer" && isRecord(payload) ? payload.for : undefined;
   return typeof reported === "string" ? reported : undefined;
 }
@@ -325,6 +344,8 @@ function lensFromRunDirectory(runDirectory: string, role: string): string | unde
  */
 export function landTicketProgressForSealedSubmission(input: {
   readonly context: HostContext;
+  readonly fields: ReturnType<typeof statusAndSummaryFromPayload>;
+  readonly receipt: string;
   readonly role: string;
   readonly accepted: unknown;
   readonly sealHead: WorktreeHeadCapture;
@@ -335,12 +356,15 @@ export function landTicketProgressForSealedSubmission(input: {
   if (runDirectory === undefined) return undefined;
   return landTicketProgress({
     runDirectory,
+    receipt: input.receipt,
     role: input.role,
     accepted: input.accepted,
+    fields: input.fields,
     sealHead: input.sealHead,
     call: input.call,
     ...(input.lens === undefined ? {} : { lens: input.lens }),
     sessionFile: progressSessionAbsolute(runDirectory, input.context),
+    auditedRound: input.context.auditedRound,
     instruction: typeof input.context.summonsInstruction === "string"
       ? input.context.summonsInstruction
       : "",
@@ -353,12 +377,15 @@ export function landTicketProgressForSealedSubmission(input: {
  * navigator lookup, #1192): the line then names no session.
  */
 export function landTicketProgress(input: {
+  readonly fields: ReturnType<typeof statusAndSummaryFromPayload>;
   readonly runDirectory: string;
+  readonly receipt: string;
   readonly role: string;
   readonly accepted: unknown;
   readonly sealHead: WorktreeHeadCapture;
   readonly lens?: string;
   readonly sessionFile: string | undefined;
+  readonly auditedRound?: string | undefined;
   readonly instruction: string;
   readonly call: ProgressRowCall;
 }): TicketProgressLine | undefined {
@@ -373,18 +400,10 @@ export function landTicketProgress(input: {
       : lensFromRunDirectory(runDirectory, input.role)
   );
 
-  const leaf = basename(runDirectory);
   const unbound = basename(subjectDirectory) === "unbound";
   const progressPath = unbound
     ? join(runDirectory, LEG_PROGRESS_FILENAME)
     : join(subjectDirectory, CURRENT_FILENAME);
-  // Original receipt first — independent of derived progress read/append.
-  // Progress I/O failure must not erase an already-accepted payload (#1199 F1).
-  const receiptIndex = nextLegReceiptIndex(runDirectory);
-  const relativePath = `runs/${leaf}/${RECEIPTS_DIRNAME}/${receiptIndex}.json`;
-  const absolutePath = join(subjectDirectory, relativePath);
-  mkdirSync(dirname(absolutePath), { recursive: true });
-  writeFileSync(absolutePath, `${JSON.stringify(input.accepted, null, 2)}\n`, "utf8");
 
   // #1199 R1: bound leg with leftover progress.jsonl must publish before this
   // seal takes the next ticket round — optional ticketNumber must not be required.
@@ -401,8 +420,8 @@ export function landTicketProgress(input: {
   const sessionRelative = input.sessionFile === undefined
     ? ""
     : relative(subjectDirectory, input.sessionFile).split(sep).join("/");
-  const { status, summary } = statusAndSummaryFromPayload(input.accepted);
-  const reviewed = forOfSealedRow(runDirectory, input.role, input.accepted);
+  const { status, summary } = input.fields;
+  const reviewed = forOfSealedRow(input.auditedRound, input.role, input.accepted);
   const instruction = input.instruction;
   const line: TicketProgressLine = {
     at: new Date().toISOString(),
@@ -413,7 +432,7 @@ export function landTicketProgress(input: {
     head: input.sealHead.head,
     ...(status === undefined ? {} : { status }),
     ...(summary === undefined ? {} : { summary }),
-    receipt: relativePath,
+    receipt: input.receipt,
     session: sessionRelative,
   };
 
@@ -439,7 +458,7 @@ export function landTicketProgress(input: {
  */
 export function relocateTicketProgressForLeg(input: {
   readonly runDirectory: string;
-}): void {
+}, publishedRounds?: Map<string, string>): void {
   if (isUnboundRunDirectory(input.runDirectory)) return;
 
   const subjectDirectory = subjectDirectoryOfRun(input.runDirectory);
@@ -454,42 +473,32 @@ export function relocateTicketProgressForLeg(input: {
     return;
   }
 
-  const ticketLines = [...readTicketProgressLines(subjectDirectory)];
+  const ticketLines = readTicketProgressLines(subjectDirectory);
+  const priorCount = ticketLines.length;
   // Receipt path is the seal identity. Append-then-unlink partial success must
   // not reassign rounds or re-append the same originals on re-entry (#1199 F2).
-  const publishedReceipts = new Set(
-    ticketLines
-      .map((line) => line.receipt)
-      .filter((receipt) => typeof receipt === "string" && receipt !== ""),
-  );
-  const pending = mine.filter((line) => !publishedReceipts.has(line.receipt));
-  if (pending.length === 0) {
-    rmSync(stagedPath, { force: true });
-    return;
-  }
-
-  const movedLines: TicketProgressLine[] = [];
-  for (const line of pending) {
+  const published = new Map(ticketLines.map(line => [line.receipt, line]));
+  for (const line of mine) {
+    if (published.has(line.receipt)) continue;
     // Current unbound staging publishes empty rounds; lens comes only from this
     // leg's admitted page. No legacy staged-round mirror-suffix branch.
     const lens = lensFromRunDirectory(input.runDirectory, line.seat);
     const round = nextRoundFromLines(ticketLines, line.seat, lens);
-    const moved: TicketProgressLine = {
-      ...line,
-      round,
-    };
-    movedLines.push(moved);
+    const moved = { ...line, round };
+    published.set(line.receipt, moved);
     ticketLines.push(moved);
   }
 
-  const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
-  mkdirSync(dirname(newCurrent), { recursive: true });
-  appendFileSync(
-    newCurrent,
-    `${movedLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
-    "utf8",
-  );
-  // Append succeeded — drop staging. Failure above leaves progress.jsonl in place.
+  if (ticketLines.length > priorCount) {
+    const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
+    mkdirSync(dirname(newCurrent), { recursive: true });
+    appendFileSync(newCurrent, `${ticketLines.slice(priorCount).map(line => JSON.stringify(line)).join("\n")}\n`, "utf8");
+  }
+  // The ticket row is committed even if later cleanup or rendering fails.
+  const filed = mine.map(({ receipt }) => published.get(receipt)!);
+  if (publishedRounds) for (const line of filed) publishedRounds.set(join(subjectDirectory, line.receipt), line.round);
+  // Retire staging only after every exact ticket row (also on retry) has a
+  // durable handoff. Replaying that metadata never creates a new round.
+  for (const line of filed) carryProgressRow(input.runDirectory, line);
   rmSync(stagedPath, { force: true });
-  for (const moved of movedLines) carryProgressRow(input.runDirectory, moved);
 }

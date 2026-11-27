@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 
 import { renderCurrentSync, type CurrentSection, type DerivedSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 
 /** Same sections as production `current.json` rendering (`src/run-dossier.ts`). */
 export type CurrentSectionName = CurrentSection | DerivedSection;
@@ -154,9 +155,20 @@ export function runLogPayloads<T = Record<string, unknown>>(runDirectory: string
   return readRunLogRows(runDirectory, kind).map((row) => row.payload as T);
 }
 
-/** What the role submitted and had accepted, in order: `accepted` of every `sealed` row in history.jsonl. */
+/**
+ * Package faults noted beside a kept conclusion in one session file, in append order.
+ * Only those lines are parsed: a session may hold malformed lines of its own.
+ */
+export function sessionFaultNotes(sessionFile: string): { diagnostic?: unknown }[] {
+  return readFileSync(sessionFile, "utf8").split("\n").filter((line) => line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE))
+    .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
+    .flatMap((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE ? [entry.data ?? {}] : []);
+}
+
+/** The originals named by this leg's seals, in order. */
 export function submittedParams(runDirectory: string): unknown[] {
-  return historyPayloads<{ accepted?: unknown }>(runDirectory, "sealed").map((payload) => payload.accepted);
+  return historyPayloads<{ receipt: string }>(runDirectory, "sealed").map(({ receipt }) =>
+    JSON.parse(readFileSync(join(runDirectory, "../..", receipt), "utf8")));
 }
 
 /**

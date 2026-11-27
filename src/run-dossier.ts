@@ -192,7 +192,7 @@ function render(
   for (const row of history) {
     const payload = isRecord(row.payload) ? row.payload : undefined;
     if (row.kind === "sealed" && payload !== undefined) {
-      latest = { toolCallId: payload.toolCallId, role: payload.role, accepted: payload.accepted, at: row.timestamp };
+      latest = { toolCallId: payload.toolCallId, role: payload.role, receipt: payload.receipt, at: row.timestamp };
     }
   }
   // #1195: parent current.json no longer projects officers from officer-pointer

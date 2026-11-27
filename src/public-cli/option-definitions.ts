@@ -625,8 +625,8 @@ const NOTARY_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Required source run locator (<ticket>:<seat>#<round> as written on the ticket's progress row, or path to that run directory). Binds the audited identity; review dialogue is the fixed Notary dispatch (verdict stays in the ledger). Missing-ticket and unreadable-status reasks keep their existing diagnostic text.",
-      zh: "必填源 run 定位符（<票号>:<席>#<轮>，轮照进度行上的写法；或该 run 目录路径）。绑定受审身份；审稿对话为符宝郎固定派单文（判词留在卷宗自行读取）。缺票号与读不出 status 的重交仍递既有诊断原文。",
+      en: "Required source run locator (<ticket>:<seat>#<round> as written on the ticket's progress row, or path to that run directory). Binds the audited identity; the review dialogue is the address of the receipt under review (the officer reads it from the ledger). Missing-ticket and unreadable-status reasks keep their existing diagnostic text.",
+      zh: "必填源 run 定位符（<票号>:<席>#<轮>，轮照进度行上的写法；或该 run 目录路径）。绑定受审身份；审稿对话为所审那份回执的地址（判词留在卷宗自行读取）。缺票号与读不出 status 的重交仍递既有诊断原文。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
@@ -1269,7 +1269,7 @@ const ROLE_COMMAND_HELP = {
   notary: {
     command: "notary",
     summary:
-      "Direct Notary summons; duties: souls/notary.md. Review uses fixed dispatch — binds --source-run identity; does not accept caller review prompt; verdict stays in the ledger. Missing-ticket (#1171) and unreadable-status reasks deliver their existing diagnostic text on the same seat, not the review sentence.",
+      "Direct Notary summons; duties: souls/notary.md. Review dialogue is the address of the receipt under review — binds --source-run identity; does not accept caller review prompt; verdict stays in the ledger. Missing-ticket (#1171) and unreadable-status reasks deliver their existing diagnostic text on the same seat, not the address.",
     usage: ["ak-role notary --source-run <ticket:seat#round|path> [options]"],
     examples: [
       "ak-role notary --source-run 1201:judge#2",
@@ -1332,7 +1332,7 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume one leg of a ticket under the live seat table (model/host/engine); session principal must still exist. The address is the ticket number and the seat: by default the seat's most recently active leg under that ticket; <seat>#<round> (round as written on the ticket's progress row, reviewer rounds carry the lens suffix) names the leg that filed that round. A leg that has reported no ticket is not in this address. Every callable seat accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary new/direct review calls use only --source-run plus the fixed review dispatch (no caller review prompt); public manual resume still passes the caller message. Global --model/--thinking/--host/--engine must be placed before <ticket> (either before `resume` or between `resume` and <ticket>); the one argv after <seat> is the opaque message, not a flag position (#471).",
+      "Resume one leg of a ticket under the live seat table (model/host/engine); session principal must still exist. The address is the ticket number and the seat: by default the seat's most recently active leg under that ticket; <seat>#<round> (round as written on the ticket's progress row, reviewer rounds carry the lens suffix) names the leg that filed that round. A leg that has reported no ticket is not in this address. Every callable seat accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary new/direct review calls use only --source-run; the review dialogue is the address of the receipt under review (no caller review prompt); public manual resume still passes the caller message. Global --model/--thinking/--host/--engine must be placed before <ticket> (either before `resume` or between `resume` and <ticket>); the one argv after <seat> is the opaque message, not a flag position (#471).",
     usage: ["ak-role resume <ticket> <seat>[#<round>] [message]"],
     examples: [
       "ak-role resume 1201 judge",

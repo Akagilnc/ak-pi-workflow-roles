@@ -2,6 +2,8 @@
  * Drive the production submission ledger producer for settlement tests.
  * Same createSubmissionLedgerHost path as role-runtime — not a parallel sitian write.
  */
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Type } from "typebox";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
@@ -31,6 +33,13 @@ async function spawnRunDirectoryFromEnv(env: NodeJS.ProcessEnv): Promise<string 
   return recorded;
 }
 
+/** A real Pi child process submits; only for proofs that need the process boundary (child seals, parent settles; a death after the write). */
+export function submitInPiChild(cwd: string, env: NodeJS.ProcessEnv, role: TerminalRoleName, drafts: unknown[], mode?: "interrupt"): void {
+  execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"),
+    fileURLToPath(new URL("../fixtures/1080-judge-receipts/submit.ts", import.meta.url))],
+  { cwd, env, input: JSON.stringify({ role, drafts, mode }) });
+}
+
 function toolNameForRole(role: TerminalRoleName): string {
   const toolName = packagedRoleOutputTool(role);
   if (toolName === undefined) throw new Error(`no output tool for role ${role}`);
@@ -38,7 +47,7 @@ function toolNameForRole(role: TerminalRoleName): string {
 }
 
 /** Shared producer core — one pipeline, callers only supply details + options. */
-async function driveLedgerProducer(input: {
+export async function driveLedgerProducer(input: {
   readonly cwd: string;
   readonly runId: string;
   readonly role: TerminalRoleName;
@@ -48,13 +57,16 @@ async function driveLedgerProducer(input: {
   readonly toolCallId: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
+  readonly invocationScopeId?: string;
+  readonly auditedRound?: string;
   /** #1199 this-turn summons / 催交 from the input seam (HostContext field). */
   readonly summonsInstruction?: string;
   /** #1199: issued session coordinate from the live --session / principal face. */
   readonly sessionFile?: string;
   /** When set, execute throws after the candidate row is written (non-sealed paths). */
   readonly executeError?: unknown;
-}): Promise<void> {
+  readonly onExecute?: () => void;
+}): Promise<string> {
   const toolName = toolNameForRole(input.role);
   let registered: HostToolDefinition | undefined;
   const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -78,6 +90,7 @@ async function driveLedgerProducer(input: {
     description: "",
     parameters: Type.Object({}),
     execute: async () => {
+      input.onExecute?.();
       if (Object.hasOwn(input, "executeError")) throw input.executeError;
       return { content: [], details: input.outputDetails ?? input.details, terminate: true };
     },
@@ -95,6 +108,8 @@ async function driveLedgerProducer(input: {
         get runDirectory() { return runDirectory; },
         set runDirectory(next: string) { runDirectory = next; },
         ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+        ...(input.invocationScopeId && { invocationScopeId: input.invocationScopeId }),
+        ...(input.auditedRound && { auditedRound: input.auditedRound }),
         ...(input.summonsInstruction === undefined
           ? {}
           : { summonsInstruction: input.summonsInstruction }),
@@ -128,6 +143,7 @@ async function driveLedgerProducer(input: {
         calls: [{ toolCallId: input.toolCallId, toolName }],
       }, context);
     }
+  return runDirectory;
 }
 
 /**
@@ -146,27 +162,17 @@ export async function sealAcceptedSubmission(input: {
   readonly home?: string;
   readonly toolCallId?: string;
   readonly runDirectory?: string;
+  readonly invocationScopeId?: string;
   /** Same-ticket re-summons court turn (#637); omit for first/manual seal. */
   readonly courtAttemptId?: string;
+  readonly auditedRound?: string;
   /** #1199 this-turn summons / 催交 for seal-time progress. */
   readonly summonsInstruction?: string;
   /** #1199 issued session coordinate from the live host face. */
   readonly sessionFile?: string;
 }): Promise<void> {
   await driveLedgerProducer({
-    cwd: input.cwd,
-    runId: input.runId,
-    role: input.role,
-    details: input.details,
-    ...(input.outputDetails === undefined ? {} : { outputDetails: input.outputDetails }),
-    toolCallId: input.toolCallId ?? "seal-1",
-    ...(input.sessionFile === undefined ? {} : { sessionFile: input.sessionFile }),
-    ...(input.home === undefined ? {} : { home: input.home }),
-    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
-    ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
-    ...(input.summonsInstruction === undefined
-      ? {}
-      : { summonsInstruction: input.summonsInstruction }),
+    ...input, toolCallId: input.toolCallId ?? "seal-1",
   });
 }
 
@@ -217,6 +223,8 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    ...(input.env.AK_ROLE_INVOCATION_SCOPE && { invocationScopeId: input.env.AK_ROLE_INVOCATION_SCOPE }),
+    ...(input.env.AK_ROLE_AUDITED_ROUND && { auditedRound: input.env.AK_ROLE_AUDITED_ROUND }),
     ...(summonsInstruction === undefined ? {} : { summonsInstruction }),
     ...(input.sessionFile === undefined ? {} : { sessionFile: input.sessionFile }),
   });
@@ -239,17 +247,10 @@ export async function recordNonSealedSubmission(input: {
   readonly toolCallId?: string;
   readonly runDirectory?: string;
   readonly courtAttemptId?: string;
+  readonly invocationScopeId?: string;
 }): Promise<void> {
   await driveLedgerProducer({
-    cwd: input.cwd,
-    runId: input.runId,
-    role: input.role,
-    details: input.details,
-    executeError: input.executeError,
-    toolCallId: input.toolCallId ?? "non-sealed-1",
-    ...(input.home === undefined ? {} : { home: input.home }),
-    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
-    ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
+    ...input, toolCallId: input.toolCallId ?? "non-sealed-1",
   });
 }
 
@@ -287,6 +288,7 @@ export async function recordNonSealedSubmissionForSpawn(input: {
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    ...(input.env.AK_ROLE_INVOCATION_SCOPE && { invocationScopeId: input.env.AK_ROLE_INVOCATION_SCOPE }),
   });
   // Place may have moved during ledger execute — keep the spawn env on the live leaf.
   await spawnRunDirectoryFromEnv(input.env);

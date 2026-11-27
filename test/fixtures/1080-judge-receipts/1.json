@@ -1,0 +1,95 @@
+{
+  "status": "continue",
+  "ticketNumber": 1080,
+  "summary": "封驳一类（P3）：迁移器删后，路径改写模块里只为它存在的多组改写层没有随删；其余票面各项核实成立。",
+  "mechanisms": [],
+  "classes": [
+    {
+      "name": "迁移器删后，现役模块里只为迁移器存在的能力层没有随删",
+      "severity": "P3（无错误外部行为，可删未删）",
+      "disposition": "成立，送修",
+      "law": [
+        "票面 #1080「目的」：「迁移器的两种运行方式、专用实现、构建与包暴露、只验迁移器自身行为的测试、因此失去调用者的代码与失效文档一并删除」",
+        "全局规则第 12 条：「被改动作废的旧物，随同改动删除」",
+        "质量法：「同一业务规则只保留一个权威实现；被替代的代码、测试和兼容路径随改动删除」",
+        "全局规则第 11 条：「难修不是驳回理由；便宜的修复直接修，不缓交」"
+      ],
+      "whyThisSentenceApplies": "票面那句的宾语是「代码」不是「函数名」。src/role-run-path-rewrite.ts:60-85「一组改写里取最长前缀」这段，能走到它的调用者（一次给出多于一组的）只有迁移器；迁移器删后这段代码的调用者归零，函数名还被调不改变这一点。",
+      "evidence": [
+        "HEAD 44ca11d3 上所有给出改写组的地方都是单元素字面量：src/public-cli/invocation.ts:738-741、src/public-cli/post-admission.ts:179-182、src/public-cli/run-lifecycle.ts:1117-1120、src/role-run-path-rewrite.ts:94-96 与 :215-217（本轮逐处打开）",
+        "基点 origin/main 上给出多于一组的只有 src/role-run-relocation.ts 的 collectRewrites／crossRunRewrites，调用者只有 book-topology-migrators-t11.ts:623 与 book-topology-runs-migrator.ts:260、:360，本票全删（git grep 于 origin/main）",
+        "这层与 crossRunRewrites 同出一个提交 8bbcf3c7（fix(#865)，git log -S 两个名字的最早命中相同；git show 8bbcf3c7 的加号行里两者并列）",
+        "src/role-run-path-rewrite.ts:88-97 单对入口把一对包成数组再交给 :100-113 的多组入口，:60-85 遍历挑最长后又调回 :42 的单对函数——同一条规则单对、多组两份形状",
+        "test 目录没有任何文件导入这两个模块（git grep），收形状不牵动测试"
+      ],
+      "boundary": "本类只含「迁移器是唯一使用者」的层。同文件 :19 的 admittedRequestPath 不在本类：本机 books 下 43916 份腿内 state.jsonl 中 30717 份带此字段（本轮亲数），现役渲染投影会读到。src/run-ticket-number.ts:137 的 migration-ticket-derivation.json 读取也不在本类：本机现存 11530 份（本轮亲数），属票面「读取…行为不变」。",
+      "history": "台院两轮都把它记作 suspect 而未封驳，理由是「函数每次归位都在被调用，没有失去调用者；收成单对要改三处现役调用的签名」；御史台两镜都判 live（低），留给本寺裁。本寺裁：成立。改签名是修法的工作量，不是驳回理由；现役行为不变这条约束照旧。"
+    }
+  ],
+  "fix": {
+    "summary": "把路径改写里只为迁移器存在的多组改写层删掉：改写只认一对「旧腿目录→新腿目录」，不再有「一组里取最长前缀」的挑选，也不再有单对包成数组再遍历的绕行；同一条字段改写规则只留一份形状。",
+    "scope": "按形状扫，不按上面列的行号：现役代码里凡「只有迁移器会用到」的参数形状、分支、包装都算本类。本寺扫过迁移器从现役模块导入的全部符号与基点／HEAD 导出引用比对，只找到 src/role-run-path-rewrite.ts 这一处；修内司动手前自己再扫一遍，另有命中一并删，没有就在回执写明扫了什么。",
+    "constraints": [
+      "现役行为不变：一条腿先落 unbound/、报号后归到票下，路径字段改写结果与现在逐字段相同",
+      "只删不加：不新增函数、参数、护栏、测试",
+      "不动 admittedRequestPath 字段、不动 migration-ticket-derivation.json 的读取"
+    ],
+    "doneWhen": "src/role-run-path-rewrite.ts 及其调用点里不再有只在「多于一组改写」时才有意义的代码；npx tsc --noEmit 退出 0；从 ak-role 真实入口走「先落 unbound、报号后归票」的聚焦测试仍绿（test/integration/public-cli-report-ticket.test.ts、public-cli-diarist-run.test.ts 等触及面）。回执写明跑时 HEAD 与调用指针。不索全量。"
+  },
+  "findings": [
+    {
+      "id": "御史台 correctness A／completeness C1（台院 suspect 同一处）",
+      "ruling": "成立，P3，送修",
+      "see": "classes[0]"
+    },
+    {
+      "id": "御史台 correctness B：起居郎测试删了两句 volume.header 断言",
+      "ruling": "驳回：事实不成立",
+      "evidence": "同一条测试 test/integration/public-cli-diarist-run.test.ts 仍断言 JSON.parse(rawLines[0]).ticket === TICKET 与 rawFile.startsWith(priorBytes)（本轮打开 :1294-1305）；header 投影的生产实现 projectTicketProvenanceHeader 基点唯一生产调用者是迁移器，随票面「因此失去调用者的代码」删除。"
+    },
+    {
+      "id": "御史台 correctness C／completeness C2：migration-ticket-derivation.json 写者已删、读者留着",
+      "ruling": "驳回：事实不成立",
+      "evidence": "本机 books 下现存 11530 份（find 亲数）；readRunTicketNumber 现役调用者 src/analyst-ledger.ts:163 附近与 src/ticket-trajectory.ts:295 附近；票面「现役卷宗的…读取…行为不变」。删它才违票面。"
+    },
+    {
+      "id": "御史台 completeness C3／台院 note：ADMITTED_PAGE_PATH_FIELDS 里的 admittedRequestPath",
+      "ruling": "驳回：事实不成立",
+      "evidence": "43916 份腿内 state.jsonl 中 30717 份带此字段（本轮 grep -l 亲数，与御史台数字一致），现役渲染投影 projectRenderedPagePaths 会读到这些行。"
+    },
+    {
+      "id": "御史台 correctness D／completeness C4：docs/research/issue-1237-test-quality-sweep.md:305 仍引已删文件",
+      "ruling": "驳回：事实不成立",
+      "evidence": "该文是 #1237 当时的调研记录，不是现行说明；票面「失效文档」所指的现行说明 docs/dossier-topology.md:112 已改，且改后那句与 HEAD 相符（src／scripts 内已无 admitted-request.json／run-state.json／.pointer.json 的读写，git grep 亲核）。"
+    },
+    {
+      "id": "台院 note：role-run-path-rewrite.ts:17 ADMITTED_PAGE_PATH_FIELDS 与 :156 rewriteSourceRunLocator 的 export 无模块外导入者",
+      "ruling": "驳回：越权加戏（无法源）",
+      "evidence": "两项在基点即如此（本轮基点／HEAD 导出引用比对：base (0,0)），不是票面「因此」所致；仓内没有「导出必须有导入者」的规矩（同法比对全仓 HEAD 有 394 个同形状导出）。修内司收形状时顺手去掉与否不作要求。"
+    }
+  ],
+  "evidence": {
+    "target": "base origin/main = d3019d896103ba5cf676557d08fa1d8ab8ad2305（亦为 merge-base），HEAD 44ca11d3dd36881fb5f8b03be5b9ff1e252f975f，2 提交均冠 ak-roles:，19 文件 +24／−4161；起止 git status 均无输出。",
+    "authority": "陛下原话亲核：源卷 d634a8d9-a196-4730-a40e-83236e6c4e9a.jsonl，owner uuid c5fcff89-969b-4564-93a1-d77634faca57 全文「迁移器可以删。别的再考虑下吧」，所答为 uuid b043fb8a-0509-495c-be3e-c2c724d97e5a 的第三题「迁移器 3528 行删不删？」。票面引文止于所答一句，无出入。ADR 0088：「旧格式的 books 不迁移，原样留档；真有必要另立票。」与本票不抵。派单文「判 #1080。base 为 origin/main，被审为本工作树 HEAD；御史台两镜回执在本票下。」未缩范围。",
+    "ticketPurpose": "本票解决的真问题：已执行完的一次性迁移器（七模块加入口约 3400 行）仍随包构建并暴露脚本。",
+    "verifiedByMe": [
+      "pnpm run typecheck 退出 0；pnpm run build 退出 0；dist 内无迁移入口文件，grep 迁移器四个名字 0 文件；npm pack --dry-run 418 个文件，含 migrat／book-topology 的为空",
+      "pnpm run migrate:book-topology → ERR_PNPM_NO_SCRIPT，退出 1；node dist/migrate-book-topology.js → MODULE_NOT_FOUND，退出 1；包内无桩无提示",
+      "亲跑 public-cli-report-ticket、public-cli-diarist-run、ticket-trajectory-binding、ticket-provenance 四个文件 34 条全过，3.47 秒",
+      "全量：御史台 completeness 镜在同一 HEAD 跑 pnpm run test:all，122 文件 638 条全过、30.26 秒（会话卷 toolu_017qHpze8sB5czpaedEKYVi9，本轮打开核对输出）；HEAD 与测试组此后未变，不重跑",
+      "基点／HEAD 全部导出的引用比对（src／scripts／extensions／test）：没有因本票变成零生产引用的导出；测试 helper 无新增孤儿；tsc --noUnusedLocals --noUnusedParameters 在改动文件上零命中",
+      "迁移器从现役模块导入的 20 个符号逐个数 HEAD 生产使用者，均仍有现役调用者；其基点调用形状没有只有迁移器才传的参数",
+      "全仓迁移器标识符残留只剩 docs/research/issue-1237-test-quality-sweep.md:305 一处",
+      "删掉的三条集成测试都直接调 migrateBookTopology／relocateBoardBoundUnboundRunsInBooks 并断言其产出；基点上引用迁移器的测试文件只有这一份加 header 相关的夹具与单测，没有「借迁移器搭前置、验现役行为」的案被误删",
+      "净增 24 行逐行看过：去 export 的声明行、收窄的 import、注释改写、package.json 收尾行；无新函数、新依赖、新状态"
+    ],
+    "inspectorAndReviewer": "台院两轮：第一轮封驳导出面一类，第二轮署。御史台两镜（本轮，HEAD 44ca11d3）：各一条 live 且同指一处，均标低危、advisory；无 P2 及以上。",
+    "cleanup": "scratchpad 两份临时文件已删；本轮在 ~/.npm/_logs 生成的四份调试日志（tsc、pack、build、vitest，按 cwd 与 argv 认定）已删；工作树内只有被忽略的 dist 与 .vitest；未动任何既存路径。"
+  },
+  "note": "票面「怎么验」三条（正确／边界／错误）在 HEAD 44ca11d3 上均核实成立，无夹带、无缺口，只剩上面一类 P3。修内司这一轮若只做删除、不带进新机制或新行为，本寺下轮亲验后可援引例外不待御史台而署。",
+  "violations": [],
+  "conflicts": [],
+  "decisionGate": "null",
+  "reason": "null",
+  "infrastructureFailure": "null"
+}

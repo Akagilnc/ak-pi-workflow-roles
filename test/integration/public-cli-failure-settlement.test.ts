@@ -500,11 +500,10 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     const history = historyPayloads<{
       type?: string; outcome?: { kind?: string; diagnostic?: string };
     }>(runDirectory, "attempt-history");
-    assert.equal(history.length, 2);
+    assert.equal(history.length, 1);
     assert.equal(history[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
     assert.equal(history[0]?.outcome?.kind, "failure", "failed leg's complete result is retained");
-    assert.equal(typeof history[0]?.outcome?.diagnostic, "string");
-    assert.equal(history[1]?.outcome?.kind, "accepted");
+    assert.ok(typeof history[0]?.outcome?.diagnostic === "string" && history[0].outcome.diagnostic !== "");
 
     // The terminal section is a last-write-wins view of the final accepted attempt.
     const report = terminalBodyAt(join(runDirectory, "current.json"), "report") as { outcome?: TerminalRoleOutcome };
@@ -521,6 +520,7 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
+    await runAkRole(["config", "set-auto-resume-limit", "0"], { packageRoot, home, io });
     const bounceParams = { status: "converged", report: "bounce-verdict" };
     const infraParams = { status: "converged", report: "infra-verdict" };
 

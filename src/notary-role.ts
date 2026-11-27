@@ -10,10 +10,6 @@ import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
  */
 
 import {
-  auditedRunIdentityFromParts,
-  auditedRunIdentityMaterial,
-} from "./audited-run-identity.ts";
-import {
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   NOTARY_TICKET_FLAG,
@@ -59,15 +55,6 @@ export function readNotaryTicketFlag(flag: unknown): number | undefined {
   return n;
 }
 
-/** Agent-start reading material: identity `<runId>@<席>` only — no directory path. */
-export function projectNotaryAuditedRunIdentity(input: {
-  readonly sourceRun: NotarySourceRunLocator;
-}) {
-  return auditedRunIdentityMaterial(
-    auditedRunIdentityFromParts(input.sourceRun.runId, input.sourceRun.role),
-  );
-}
-
 /**
  * Session custom-entry type for typed notary bound (written by shared envelope).
  * Role module only projects; lifecycle write is envelope-owned (ADR 0018).
@@ -98,7 +85,7 @@ export function projectNotaryBoundFromFlags(
 }
 
 /** Assemble systemPrompt body from base + soul + the audited seat's Soul (NO embedded bound JSON).
- * Audited-run identity travels separately as `readingMaterial`; adapters fold
+ * Audited-run identity travels separately as the shared envelope's `readingMaterial`; adapters fold
  * it into the provider-visible prompt at the send boundary. */
 export function assembleNotaryAgentStartPrompt(input: {
   readonly baseSystemPrompt: string;
@@ -177,9 +164,6 @@ export function createNotaryRoleRuntime(
               ...(activation.auditedSoul === undefined
                 ? {}
                 : { audited: { seat: activation.sourceRun.role, soul: activation.auditedSoul } }),
-            }),
-            readingMaterial: projectNotaryAuditedRunIdentity({
-              sourceRun: activation.sourceRun,
             }),
           };
         });

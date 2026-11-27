@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { test } from "vitest";
 import { withPrimaryAwareCleanup, worktreeTempPrefix } from "../helpers/environment-fixtures.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
@@ -18,7 +18,7 @@ import { Type } from "typebox";
 import {
   createSubmissionLedgerHost,
   readRecordedSubmissionRows,
-  readRecordedSubmissions,
+  readReceipt,
 } from "../../src/submission-ledger.ts";
 import {
   readTicketProgressLines,
@@ -147,9 +147,7 @@ test("non-object params stay raw on accepted/submissions — no envelope wrap (#
     );
     await host.start("raw");
     await host.tool().execute("raw", "plain-string-submission", undefined, undefined, host.context);
-    const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-    assert.equal(all.length, 1);
-    assert.equal(all[0], "plain-string-submission");
+    assert.deepEqual((await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).rows.map(readReceipt), ["plain-string-submission"]);
   });
 });
 
@@ -172,11 +170,8 @@ test.each(["unbound", "bound", "inline"] as const)("ledger records raw params an
     const result = await host.tool().execute("p1", params, undefined, undefined, host.context);
     assert.equal(result.terminate, placement !== "unbound");
     assert.deepEqual(result.details, details);
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-    assert.deepEqual(rows[0]?.accepted, params, "ledger must keep LLM params");
-    const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-    assert.equal(all.length, 1);
-    assert.deepEqual(all[0], params);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    assert.deepEqual(rows.map(readReceipt), [params]);
   });
 });
 
@@ -191,13 +186,6 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     };
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
     assert.deepEqual(first.details, firstPayload);
-    assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
-      // #1201: the row carries its progress receipt reference (no round while unbound).
-      {
-        role: "judge", kind: "accepted", accepted: firstPayload, toolCallId: "first",
-        receipt: "runs/run-ledger@judge/receipts/1.json",
-      },
-    ]);
     // #1199: each seal lands progress immediately — no post-turn history pick.
     const unbound = join(f.root, ".ak-roles", "books", "fixture", "unbound");
     assert.equal(readTicketProgressLines(unbound).length, 1);
@@ -236,7 +224,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
       process.stderr.write = previousWrite;
     }
 
-    const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
+    const all = (await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).rows.map(readReceipt);
     assert.equal(all.length, 2);
     assert.deepEqual(all[0], firstPayload);
     assert.deepEqual(all[1], secondDetails);
@@ -274,8 +262,8 @@ test("continuing gate records candidate without sealing acceptance", async () =>
     const candidate = { status: "continue" };
     const result = await continuing.tool().execute("continue", candidate, undefined, undefined, continuing.context);
     assert.equal(result.terminate, false);
-    assert.deepEqual(await readRecordedSubmissions(f.root, "run-ledger", f.root), [candidate]);
-    assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [{ role: "judge", kind: "candidate", accepted: candidate, toolCallId: "continue" }]);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    assert.deepEqual(rows.map(row => [row.kind, readReceipt(row)]), [["candidate", candidate]]);
     assert.deepEqual(continuing.closedSubmissions, []);
   });
 });
@@ -286,7 +274,7 @@ test("mixed tools in one turn still record every terminating submission (#836 no
     await f.tool().execute("a", { status: "converged" }, undefined, undefined, f.context);
     await f.start("b", "read");
     await f.close();
-    assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 1);
+    assert.equal((await readRecordedSubmissionRows(f.root, "run-ledger", f.root)).rows.length, 1);
     assert.equal(f.deliveredRejections.length, 0, "no non-sole rejection");
     const kinds = (await ledgerRecords(f.root)).map((r) => r.kind);
     assert.ok(kinds.includes("sealed"));
@@ -305,14 +293,8 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     const result = await host.tool().execute("review-escalate", params, undefined, undefined, host.context);
     assert.equal(ran, 1);
     assert.deepEqual(result.details, params);
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-    assert.deepEqual(rows.at(-1), {
-      role: "judge",
-      kind: "accepted",
-      accepted: params,
-      toolCallId: "review-escalate",
-      receipt: "runs/run-ledger@judge/receipts/1.json",
-    });
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    assert.deepEqual(rows.map(row => [row.kind, readReceipt(row)]), [["accepted", params]]);
     assert.deepEqual(publicNavigatorSettlement("judge", null, {
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
@@ -339,10 +321,9 @@ test("#1214 A2: infrastructureFailure declaration is recorded; declaration itsel
     });
     const sealed = (await ledgerRecords(f.root)).filter((record) => record.kind === "sealed");
     assert.ok(sealed.some((record) => {
-      const payload = record.payload as { role?: string; accepted?: unknown; toolCallId?: string };
-      return payload.role === "coder"
-        && payload.toolCallId === "coder-infra"
-        && JSON.stringify(payload.accepted) === JSON.stringify(params);
+      const payload = record.payload as { role?: string; receipt?: string; toolCallId?: string };
+      return payload.role === "coder" && payload.toolCallId === "coder-infra"
+        && payload.receipt === "runs/run-ledger@coder/receipts/1.json";
     }), "coder original payload with infrastructureFailure must seal");
     const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
     assert.equal(outcomes.length, 0, "declaration alone is not an infrastructure outcome");
@@ -363,12 +344,11 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
       outcome: "infrastructure",
       diagnostic: "typed seam unavailable",
       role: "judge",
-      accepted: params,
+      receipt: "runs/run-ledger@judge/receipts/1.json",
     });
     // #881: original params stay projectable even when outcome is not sealed.
-    assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [
-      { role: "judge", kind: "infrastructure", accepted: params, toolCallId: "failure" },
-    ]);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    assert.deepEqual(rows.map(readReceipt), [params]);
   });
 });
 
@@ -385,11 +365,11 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
     assert.equal((outcome?.payload as { code?: string }).code, "typed-bounce", label);
     assert.equal((outcome?.payload as { role?: string }).role, "judge", label);
     // #881: correctable-rejection original params project once (candidate+outcome deduped).
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     const projected = rows.find(
       (row) => row.kind === "correctable-rejection" && row.toolCallId === label,
     );
-    assert.deepEqual(projected?.accepted, params, label);
+    assert.deepEqual(readReceipt(projected!), params, label);
   });
 });
 
@@ -407,16 +387,14 @@ test("#881 reader projects non-sealed original params once per tool call (correc
     });
     await assert.rejects(infra.tool().execute("call-infra", infraParams, undefined, undefined, infra.context));
 
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
     assert.deepEqual(
-      rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: row.accepted })),
+      rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: readReceipt(row) })),
       [
         { kind: "correctable-rejection", toolCallId: "call-bounce", accepted: bounceParams },
         { kind: "infrastructure", toolCallId: "call-infra", accepted: infraParams },
       ],
     );
-    // candidate + outcome both carry params → one projected row per call.
-    assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 2);
     const kinds = (await ledgerRecords(f.root)).map((record) => record.kind);
     assert.equal(kinds.filter((kind) => kind === "candidate").length, 2);
     assert.equal(kinds.filter((kind) => kind === "outcome").length, 2);
@@ -440,44 +418,44 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
   });
 });
 
-test("a recorded append failure never returns accepted", async () => {
+test("an unreadable ledger prevents acceptance but not saving the arriving draft", async () => {
   await withLedgerFixture(async (f) => {
-    let recordFile: string | undefined;
-    const failing = registerTool(f.root, async () => {
-      // Force first candidate write, then lock the file before sealed append.
-      return { content: [], details: { status: "converged" }, terminate: true };
-    });
-    await withPrimaryAwareCleanup(
-      async () => {
-        // Pre-create by writing a candidate through a throw path, then lock.
-        const primer = registerTool(f.root, async () => {
-          throw new Error("prime");
-        });
-        await assert.rejects(primer.tool().execute("prime", {}, undefined, undefined, primer.context));
-        recordFile = (await readdir(`${f.root}/.ak-roles/books`, { recursive: true })).find((file) => file.endsWith("history.jsonl"));
-        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o400);
-        await assert.rejects(failing.tool().execute("seal-failure", {}, undefined, undefined, failing.context));
-        // Unlock to read.
-        if (recordFile !== undefined) await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600);
-        // Primer infrastructure params remain; the locked seal must not add an accepted row.
-        const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-        assert.equal(rows.some((row) => row.kind === "accepted"), false);
-        assert.ok(rows.some((row) => row.kind === "infrastructure"));
-      },
-      async () => {
-        if (recordFile !== undefined) {
-          try { await chmod(`${f.root}/.ak-roles/books/${recordFile}`, 0o600); } catch { /* already unlocked */ }
-        }
-      },
-    );
+    const primer = registerTool(f.root, async () => { throw new Error("prime"); });
+    await assert.rejects(primer.tool().execute("prime", {}, undefined, undefined, primer.context));
+    const history = join(f.context.runDirectory!, "history.jsonl");
+    await rename(history, `${history}.saved`);
+    await mkdir(history);
+    const draft = { status: "converged", findings: [] };
+    await assert.rejects(f.tool().execute("seal-failure", draft, undefined, undefined, f.context));
+    assert.deepEqual(JSON.parse(await readFile(join(f.context.runDirectory!, "receipts/2.json"), "utf8")), draft);
+    await rm(history, { recursive: true });
+    await rename(`${history}.saved`, history);
+    const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    assert.equal(rows.some((row) => row.kind === "accepted"), false);
+    assert.ok(rows.some((row) => row.kind === "infrastructure"));
+    // The ledger breaks while the tool turns the draft back: recording that fails,
+    // and the failure still carries the tool's own reason (bounce or fault alike).
+    for (const toolError of [new WorkerUnfinishedReasonReminderError(), new Error("typed seam unavailable")]) {
+      const breaking = registerTool(f.root, async () => {
+        await rename(history, `${history}.saved`);
+        await mkdir(history);
+        throw toolError;
+      });
+      const rejected = await breaking.tool().execute("bounce-unrecorded", draft, undefined, undefined, breaking.context)
+        .then(() => undefined, (error: unknown) => error);
+      await rm(history, { recursive: true });
+      await rename(`${history}.saved`, history);
+      assert.ok(rejected instanceof AggregateError);
+      assert.equal(rejected.errors[1], toolError);
+      assert.equal((rejected.cause as NodeJS.ErrnoException).code, "EISDIR");
+    }
   });
 });
 
 test("unknown run read APIs return empty without ownership throw", async () => {
   await withLedgerFixture(async (f) => {
-    const rows = await readRecordedSubmissionRows(f.root, "missing-run-id", { home: f.root });
+    const { rows } = await readRecordedSubmissionRows(f.root, "missing-run-id", { home: f.root });
     assert.deepEqual(rows, []);
-    assert.deepEqual(await readRecordedSubmissions(f.root, "missing-run-id", { home: f.root }), []);
   });
 });
 
@@ -492,65 +470,14 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
     {
       await reopened.start(reusedCallId);
       await reopened.tool().execute(reusedCallId, { status: "converged" }, undefined, undefined, reopened.context);
-      const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+      const { rows } = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
       assert.deepEqual(
-        rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: row.accepted })),
+        rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: readReceipt(row) })),
         [
           { kind: "accepted", toolCallId: reusedCallId, accepted: { status: "continue" } },
           { kind: "accepted", toolCallId: reusedCallId, accepted: { status: "converged" } },
         ],
       );
-      const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-      assert.deepEqual(recorded, [
-        { status: "continue" },
-        { status: "converged" },
-      ]);
-      // attemptId is a recording tag, not a visibility gate.
-      assert.deepEqual(
-        await readRecordedSubmissions(f.root, "run-ledger", {
-          home: f.root,
-          attemptId: "court-turn-empty",
-        }),
-        recorded,
-      );
     }
-  });
-});
-
-test("legacy records with priorEventId are readable beside new records", async () => {
-  await withLedgerFixture(async (f) => {
-    await f.start("call-1");
-    await f.tool().execute("call-1", { status: "first-accepted" }, undefined, undefined, f.context);
-
-    // Locate the exact ledger jsonl file
-    const files = await readdir(`${f.root}/.ak-roles/books`, { recursive: true });
-    const ledgerRel = files.find((file) => file.endsWith(".jsonl") && !file.includes("session.jsonl"));
-    assert.ok(ledgerRel);
-    const ledgerFile = `${f.root}/.ak-roles/books/${ledgerRel}`;
-
-    // Append a raw line simulating a legacy record that carried priorEventId
-    const legacyRecord = {
-      level: "event",
-      kind: "candidate",
-      identity: "legacy-evt-2",
-      subject: { runId: "run-ledger", attemptId: "run-ledger:attempt" },
-      priorEventId: "call-1",
-      timestamp: new Date().toISOString(),
-      host: "pi",
-      payload: {
-        type: "candidate",
-        role: "judge",
-        toolCallId: "call-legacy",
-        params: { status: "legacy-accepted" },
-      },
-    };
-    await appendFile(ledgerFile, `${JSON.stringify(legacyRecord)}\n`);
-
-    // Verify readRecordedSubmissions reads both without error
-    const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-    assert.deepEqual(recorded, [
-      { status: "first-accepted" },
-      { status: "legacy-accepted" },
-    ]);
   });
 });

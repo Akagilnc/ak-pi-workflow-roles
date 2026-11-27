@@ -4,9 +4,9 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { lockCurrentJson, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 
@@ -18,7 +18,7 @@ import {
 } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-contracts.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import type {
@@ -506,7 +506,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
 }
 
 
-test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)", async () => {
+test.each([1, 2])("#969 non-pi 给事中上呈 restores the parent with missing parent receipt %i", async missing => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -520,6 +520,7 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       gateCalls,
       submissionGateHost: "codex",
       countersignSequence: [
+        { details: { status: "continue", note: "先补正", ticketNumber: 924 } },
         {
           details: {
             status: "escalate",
@@ -533,10 +534,8 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
         { details: { status: "converged", note: "署", ticketNumber: 924} },
       ],
       steps: [
-        {
-          kind: "output",
-          details: { status: "converged", ticketNumber: 924 },
-        },
+        { kind: "output", details: { status: "converged", ticketNumber: 924, draft: 1 } },
+        { kind: "output", details: { status: "converged", ticketNumber: 924, draft: 2 } },
       ],
     });
     const result = await runAkRole(
@@ -577,16 +576,31 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     );
     // #1201: the escalating officer is addressed by the ticket and seat its terminal names.
     assert.equal(result.terminal.ticket, 924);
+    const lostChild = result.terminal.receipts![0]!.receipt;
+    const lostParent = join(parentDirectory, `receipts/${missing}.json`);
+    await Promise.all([rm(lostChild), rm(lostParent)]);
+    if (missing === 1) lockCurrentJson(parentDirectory); // The latest original is readable; only publication fails.
+    else await rm(join(parentDirectory, "current.json"));
     const resumed = await runAkRole(["resume", "924", result.terminal.roleOutcome.role], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });
+    assert.equal(resumed.exitCode, missing === 1 ? 0 : 1);
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "one child resume continues the parent");
+    assert.deepEqual(resumed.terminal.receiptErrors?.map(e => [e.receipt, e.identity?.code]), [[lostParent, "ENOENT"]]);
+    if (missing === 2) {
+      assert.equal(resumed.terminal.roleOutcome.kind, "failure");
+      assert.deepEqual(resumed.terminal.submissions, [{ status: "converged", ticketNumber: 924, draft: 1 }]);
+      return;
+    }
     // #1195: after 给事中上呈→御答 resume→符宝郎署→接回中书省, outer final is
     // 中书省 own volume only — no other-seat projection.
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(resumed.terminal.roleOutcome.payloads, [{ status: "converged", ticketNumber: 924, draft: 2 }]);
+    assert.deepEqual(resumed.terminal.submissions, resumed.terminal.roleOutcome.payloads);
+    assert.deepEqual(resumed.terminal.artifacts, []);
     // #1200: each gate officer's row names the round it was summoned for. The
-    // ruling resumed 给事中 directly, so its second row keeps that round; 符宝郎
+    // ruling resumed 给事中 directly, so its third row keeps that round; 符宝郎
     // names the 给事中 round the gate handed it.
     assert.deepEqual(
       readTicketProgressLines(join(home, ".ak-roles", "books", "project", "924"))
@@ -595,8 +609,11 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
         ["diarist", "1", undefined],
         ["secretariat", "1", undefined],
         ["countersign", "1", "secretariat#1"],
-        ["countersign", "2", "secretariat#1"],
-        ["notary", "1", "countersign#2"],
+        ["notary", "1", "countersign#1"],
+        ["secretariat", "2", undefined],
+        ["countersign", "2", "secretariat#2"],
+        ["countersign", "3", "secretariat#2"],
+        ["notary", "2", "countersign#3"],
       ],
     );
   });
@@ -968,7 +985,7 @@ async function adapterBoundaryCase(input: {
       };
       const submitted = async () => (await readRecordedSubmissionRows(
         project, "01a0adp969-0000-7000-8000-000000000001", home,
-      )).map((row) => row.accepted);
+      )).rows.map(readReceipt);
 
       const prepare = () =>
         prepareRoleEnvelope({

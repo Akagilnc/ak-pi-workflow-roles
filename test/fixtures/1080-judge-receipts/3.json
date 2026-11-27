@@ -1,0 +1,46 @@
+{
+  "status": "converged",
+  "ticketNumber": 1080,
+  "summary": "署：通进司所列 Sourcery 一条指摘事实不成立，落盘页从不带内嵌 principal；HEAD 未变，上轮收敛维持。",
+  "mechanisms": [],
+  "findings": [
+    {
+      "id": "collector#1：Sourcery review 5916578696（评审正文，无行内评论）",
+      "text": "When a run is relocated, the admitted-page rewrite no longer updates its nested principal session paths, so a persisted page can contain the new run location alongside stale principal coordinates. Reverting restores the rewrite behavior but does not repair pages already written; the stale paths are bounded and can be regenerated or corrected.",
+      "ruling": "驳回：事实不成立",
+      "evidence": [
+        "指摘的前提是「落盘页里有内嵌的 principal」。写入侧没有这样的页：admitted 页落盘前显式去掉 principal，只写顶层 sessionDirectory／sessionFile（src/public-cli/invocation.ts:359-370，:364 `const { principal: _omitPrincipal, ...rest } = body;`）；其余五处 admitted 更新（:499、:539、:575、:763、:786）都不加 principal；runState 页两个写者都是顶层平铺（src/public-cli/run-lifecycle.ts:75-83 的 RoleRunRecord、:322-340 的 writeRoleRunStateDisk）。",
+        "存量侧同样没有：本机 books 下 43936 份腿内 state.jsonl，含 \"principal\" 的为 0 份（本轮重数）。",
+        "落盘页上真正存在的会话路径是顶层 sessionDirectory／sessionFile，仍在 ADMITTED_PAGE_PATH_FIELDS 内（src/role-run-path-rewrite.ts:17-25），归位、续跑读盘、渲染三条路照旧改写，4a05b57f 没有动它。",
+        "内存里的 admitted.principal 不靠被删的那段：归位与回合后跟随两处都在改写后下一句用 authority.seal 的新值整体替换（invocation.ts:733-743、post-admission.ts:172-184），上轮判词已逐处核过旧对象无读者。",
+        "同一 PR 上 Cursor 自动化对同一处的结论与本寺一致（通进司回执材料：「Dropping in-page principal rewrite inside rewriteAdmittedRoleRunPage matches the #1183 authority path; resume still rewrites session coordinates in readRoleRunStateDisk」），仅作旁证。"
+      ]
+    },
+    {
+      "id": "collector#1：Sourcery Linked issues 表两条「Check by hand (runtime)」（构建产物无迁移入口与已删入口报错；构建、类型检查与全量测试）",
+      "ruling": "不是指摘，是它自述未运行的验收项；本寺在当前 HEAD 核过，成立",
+      "evidence": [
+        "HEAD 4a05b57f 上本轮重跑：pnpm run build 退出 0，dist 下含 migrat 的文件 0 个；pnpm run migrate:book-topology 退出 1；node dist/migrate-book-topology.js 退出 1。",
+        "PR #1297 的 CI（run 43826239537，pull_request 事件，headSha 4a05b57f）：pnpm run typecheck 与 pnpm exec vitest run 两步均 success（gh run view 逐步打开）。"
+      ]
+    },
+    {
+      "id": "collector#1：CodeRabbit、Cursor Bugbot、Cursor 自动化、Codex",
+      "ruling": "均无指摘，无须处置",
+      "evidence": "通进司回执各组 findings 为空，评审均在当前 HEAD 4a05b57f 完成。"
+    }
+  ],
+  "note": "被审 HEAD 仍为 4a05b57fe38991603e161a148e30b0b6cb1b39eb，自 judge#2 收敛后没有新提交，本轮没有修理、没有新机制；收敛依据与 judge#2 相同（上轮御史台两镜无 P2 及以上，P3 两类已亲验结清），本轮只新增对通进司一条指摘的处置。PR #1297 OPEN、MERGEABLE，五项检查全部 success；origin/main 为 441d2ee7，不碰本票文件。这一 HEAD 即最终待合并状态，全量以该次 CI 为证。",
+  "evidence": {
+    "target": "merge-base d3019d896103ba5cf676557d08fa1d8ab8ad2305，HEAD 4a05b57fe38991603e161a148e30b0b6cb1b39eb；起止 git status 均无输出。",
+    "opened": "通进司回执 runs/01a1e354-a4df-718d-9cab-3e96e2745d2f@collector/receipts/1.json 全文；Sourcery 评审正文经 gh api pulls/1297/reviews/5916578696 取原文核对，与回执所录逐字相同；PR 行内评论为空（gh api pulls/1297/comments）。",
+    "cleanup": "本轮未建临时文件；重建的 dist 在工作树内且被忽略；未在工作树与临时目录之外创建任何东西。"
+  },
+  "classes": [],
+  "violations": [],
+  "conflicts": [],
+  "fix": "null",
+  "decisionGate": "null",
+  "reason": "null",
+  "infrastructureFailure": "null"
+}

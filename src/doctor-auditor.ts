@@ -1,4 +1,3 @@
-import { auditorRunDirectory } from "./role-run-placement.ts";
 import {
   runComplianceAudit,
   type AuditorSummon,
@@ -14,7 +13,6 @@ export { DOCTOR_AUDIT_TOOL_NAME } from "./doctor-contracts.ts";
 
 export type DoctorAuditOptions = {
   context: HostContext;
-  submission: unknown;
   signal?: AbortSignal;
   /** Same ceiling the public execution seam already resolved. */
   autoResumeLimit?: number;
@@ -36,10 +34,7 @@ export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promis
     return runComplianceAudit({
       subject: "doctor",
       context: options.context,
-      submission: options.submission,
-      ...(auditorRunDirectory(options.context) === undefined
-        ? {}
-        : { runDirectory: auditorRunDirectory(options.context) }),
+      runDirectory: dossier.runDirectory,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.autoResumeLimit === undefined ? {} : { autoResumeLimit: options.autoResumeLimit }),
       ...(options.summonAuditor === undefined ? {} : { summonAuditor: options.summonAuditor }),

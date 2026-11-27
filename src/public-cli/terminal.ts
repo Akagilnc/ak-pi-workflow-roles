@@ -7,8 +7,10 @@
  */
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
-import type { PackagedRole } from "../packaged-role-registry.ts";
+import { receiptStatus, type PackagedRole } from "../packaged-role-registry.ts";
+import type { PublicSummonResult } from "../public-role-summons.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
+import { readableGateItem } from "../readable-gate-item.ts";
 
 export type { ControlledFailureCause } from "../host-contracts.ts";
 
@@ -98,6 +100,11 @@ export type TerminalNavigatorFact =
       reason: string;
     };
 
+/** Even undefined is an observed word. Only an independent receipt still needs reading. */
+export function returnedReceiptStatus(summoned: PublicSummonResult, getReceipt: () => unknown): unknown {
+  return "receivedStatus" in summoned ? summoned.receivedStatus : receiptStatus(getReceipt());
+}
+
 /**
  * Parent-facing current reply: a court's own accepted/audit payloads only.
  * Run-scoped history stays on TerminalResult.submissions (#879 / #836), and a
@@ -134,12 +141,8 @@ export type TerminalResult = {
    * (#953 — not copied onto failure.payloads).
    */
   submissions?: readonly unknown[];
-  /**
-   * Tool-call identity of the sealed submission this terminal settled from
-   * (#1171 F2-R8). Carried from court/settlement so audit consumers bind the
-   * object in hand — never re-infer from the whole-leg latest accepted row.
-   */
-  submissionToolCallId?: string;
+  /** Originals missing from the presentation, with the actual read/parse cause. */
+  receiptErrors?: readonly { receipt: string; diagnostic: string; identity?: { name: string; code?: string | number } }[];
   /** Call-local auto-resume observation (0..2) for this single LLM call; read-only, not persisted. */
   autoResumeCount?: number;
   /**
@@ -168,6 +171,10 @@ export type TerminalReceiptRef = {
  */
 export function adviceNavigatorFact(input: { prose: string }): TerminalNavigatorFact {
   return { disposition: "advice", prose: input.prose };
+}
+
+export function receiptErrorRows(result: TerminalResult): string[] {
+  return (result.receiptErrors ?? []).map(fault => `receipt-error\t${JSON.stringify(fault)}`);
 }
 
 /** One leg's public identity rows (#1201): its ticket, then its receipts newest first. */
@@ -251,25 +258,24 @@ export function formatTerminalResult(result: TerminalResult): string {
     }
   }
   lines.push(...identityRows(result));
+  for (const row of receiptErrorRows(result)) lines.push(row);
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }
-  // Role-result block: original payloads, newest first for humans (#961).
-  // Typed payloads/submissions stay ledger order; only this presentation reverses.
+  // The current reply stays newest first for humans (#961); leg history is arrival order.
   // Present the current result and the run history on distinct faces (#879 / #836).
   // Neither a prior court's submission nor a failed turn's history is this reply.
   const current = result.roleOutcome.kind === "failure"
     ? result.roleOutcome.payloads ?? []
     : currentReplyRows(result);
-  for (const [label, rows] of [
-    ["submission", current],
-    ["recorded-submission", result.submissions ?? []],
-  ] as const) {
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      const payload = rows[i]!;
-      const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
-      lines.push(`${label}\t${encodeTerminalField(rendered)}`);
-    }
+  const cell = (payload: unknown) => encodeTerminalField(readableGateItem(payload));
+  const currentCells = new Map<unknown, string>();
+  for (let i = current.length - 1; i >= 0; i--) {
+    const payload = current[i];
+    const encoded = currentCells.get(payload) ?? cell(payload);
+    currentCells.set(payload, encoded);
+    lines.push(`submission\t${encoded}`);
   }
+  for (const payload of result.submissions ?? []) lines.push(`recorded-submission\t${currentCells.get(payload) ?? cell(payload)}`);
   return `${lines.join("\n")}\n`;
 }

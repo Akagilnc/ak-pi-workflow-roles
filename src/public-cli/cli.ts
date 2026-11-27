@@ -101,7 +101,8 @@ import {
 } from "../ticket-address.ts";
 import {
   AUTO_RESUME_LIMIT,
-  peekRoleRunRole,
+  findRunDirectoryById,
+  readResumablePublicRole,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 
@@ -1253,7 +1254,7 @@ export async function runAkRole(
         current.exitCode === 0 && current.admitted?.correlationId !== undefined
         && current.terminal?.roleOutcome.kind === "accepted"
         && current.terminal.roleOutcome.decisiveFacts?.directionUnsettled !== true
-        && !latestPayloadEscalated(current.terminal.roleOutcome)
+        && !latestPayloadEscalated(current)
       ) {
         const parentRunId = current.admitted.correlationId;
         const parentSource = admittedSourceRunPath(current.admitted);
@@ -1263,12 +1264,11 @@ export async function runAkRole(
           ...(parentSource === undefined ? {} : { runDirectory: parentSource }),
           authority: env.principalAuthority ?? piDurablePrincipalAuthority,
         };
-        const parentRole = await peekRoleRunRole(
-          home,
-          parentRunId,
-          parentSource === undefined ? undefined : { runDirectory: parentSource },
-        );
-        if (parentRole === undefined) break;
+        const directory = await findRunDirectoryById(home, parentRunId, undefined, undefined, parentSource);
+        if (directory === undefined) break;
+        const parent = await readResumablePublicRole(home, directory, resumeEnv.principalAuthority);
+        if (parent === undefined) break;
+        const parentRole = parent.admitted.role;
         const parentSeat = resolveEffectiveSeat(
           parts.config,
           parentRole,
@@ -1284,7 +1284,7 @@ export async function runAkRole(
           seat: parentSeat,
           config: parts.config,
         });
-        current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
+        current = await continueParentAfterChild(parent, current.admitted, current.terminal, current.receivedStatus, parentEnv, io);
       }
       return cliResultFromRoleRun(current);
     }

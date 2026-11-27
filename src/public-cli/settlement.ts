@@ -18,9 +18,10 @@ import {
 } from "../run-terminal-artifacts.ts";
 
 import {
-  readAttemptScopedSubmissionRows,
   readRecordedSubmissionRows,
-  readRecordedSubmissions,
+  readReceipt,
+  type LedgerFault,
+  type RecordedSubmissionRow,
 } from "../submission-ledger.ts";
 
 import { CONTROLLED_FAILURE_CAUSES, type RoleTurnKnownFailure } from "../host-contracts.ts";
@@ -49,7 +50,6 @@ import {
 import { findLatestDurablePackagedRoleTerminal } from "../navigator-invocation-identity.ts";
 import {
   isNavigatorSeat,
-  packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
   type PackagedArtifactFace,
 } from "../packaged-role-registry.ts";
@@ -65,14 +65,10 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
+  SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { readStateRowsSync, runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
-
-/** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
-function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">): string {
-  return homeFromRunDirectory(admitted.runDirectory);
-}
 
 /**
  * Court-turn settlement scope (#637 same-ticket re-summons).
@@ -83,6 +79,8 @@ export type SettlementCourtScope = {
   readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
+  /** Recover the court of an already sealed submission. */
+  readonly seal?: "latest" | { readonly receipt: string };
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
@@ -108,7 +106,8 @@ export async function retainPackageFault(input: {
     readonly diagnostic: string;
     readonly recordedAt: string;
   }) => Promise<void>;
-  readonly stderr?: (text: string) => void;
+  /** The caller this fault belongs to; a quiet nested seat passes it on (callerDiagnostic). */
+  readonly io?: Pick<import("./cli-io.ts").CliIo, "stderr" | "callerDiagnostic">;
 }): Promise<void> {
   const payload = {
     diagnostic: input.diagnostic,
@@ -146,15 +145,83 @@ export async function retainPackageFault(input: {
         `post-dispatch diagnostic durable retention failed (best-effort continue): log=${describeErrorIdentity(logError)}`;
     }
   }
-  const stderr = input.stderr ?? ((text: string) => {
-    process.stderr.write(text);
-  });
+  const stderr = input.io === undefined
+    ? (text: string) => { process.stderr.write(text); }
+    : input.io.callerDiagnostic ?? input.io.stderr;
   try {
     stderr(formatCliDiagnostic(input.diagnostic));
     if (retentionFailure !== undefined) stderr(formatCliDiagnostic(retentionFailure));
   } catch {
     // Presentation is best-effort beside an already-formed host terminal.
   }
+}
+
+/**
+ * Session custom-entry type for a best-effort post-dispatch cleanup
+ * diagnostic (#840 r9 判词 class 1). Every auto-resume attempt dispatches
+ * with dummyIo (src/public-cli/auto-resume.ts), so an io.stderr-only
+ * diagnostic never reaches a real caller — the dossier is the durable
+ * channel that does (失败诚实宪法 真因必须落痕).
+ */
+export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
+  "ak_post_admission_cleanup_diagnostic" as const;
+
+/**
+ * Best-effort post-dispatch diagnostic that must still leave a real trace
+ * even though the attempt's own io may be dummyIo (#840 r9 判词 class 1).
+ * Single authoritative durable channel — a dossier custom entry via
+ * sessionAppender — not a standing duplicate. Only when that one write
+ * itself fails does this fall back to a plain run-artifacts file (reusing
+ * auto-resume.ts's existing dispatch-error retention helper — no new
+ * mechanism), so an unhealthy session never leaves this diagnostic with
+ * zero durable trace (#840 bounce class 2); a healthy session never gets a
+ * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
+ */
+export function packageFaultNoteFor(
+  admitted: { readonly runDirectory: string; readonly principal: DurablePrincipal },
+  env: { readonly sessionAppender: SessionCustomEntryAppender; readonly principalAuthority: DurablePrincipalAuthority },
+  io: Pick<import("./cli-io.ts").CliIo, "stderr" | "callerDiagnostic">,
+): (diagnostic: string) => Promise<void> {
+  return (diagnostic) => retainPackageFault({
+    runDirectory: admitted.runDirectory,
+    diagnostic,
+    appendSession: (payload) => env.sessionAppender(
+      env.principalAuthority,
+      admitted.principal,
+      POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
+      payload,
+    ),
+    io,
+  });
+}
+
+/**
+ * ADR 0080: the one disposition for a finishing step that throws once a
+ * conclusion is in hand — the true cause is noted beside it and the conclusion
+ * stays. Every entry that reaches a submission finishes through this.
+ */
+export async function besideConclusion<T>(
+  note: (diagnostic: string, error: unknown) => Promise<void>,
+  step: string,
+  run: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await run();
+  } catch (error) {
+    await note(`${step} failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`, error);
+    return undefined;
+  }
+}
+
+/** Presenting to this caller beside a conclusion in hand: a failed write is retained on the run and told here, never replacing it. */
+export function besidePresentation(
+  runDirectory: string,
+  io: Pick<import("./cli-io.ts").CliIo, "stderr" | "callerDiagnostic">,
+  step: string,
+  present: () => void,
+): Promise<void> {
+  return besideConclusion((diagnostic, error) => retainPackageFault({ runDirectory, diagnostic, error, io }), step,
+    async () => present());
 }
 
 /** Record a package fault without letting the note replace the terminal. */
@@ -170,30 +237,6 @@ export async function noteSettlementFault(
   await retainPackageFault({ runDirectory, diagnostic });
 }
 
-export function ledgerReadScope(
-  admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
-  scope?: SettlementCourtScope,
-): { home: string; sessionParent: string; attemptId?: string } {
-  return {
-    home: sealedLedgerHome(admitted),
-    sessionParent: sessionFileOf(admitted.runDirectory),
-    ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
-      ? {}
-      : { attemptId: scope.courtAttemptId }),
-  };
-}
-
-type SealedLedgerSettle = {
-  readonly outcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>;
-  /** Tool-call identity of the latest this-settle terminal row (#1171 F2-R8). */
-  readonly submissionToolCallId?: string;
-  /** Progress rows written for this settle's accepted submissions (#1201). */
-  readonly filed: readonly FiledReceipt[];
-};
-
-/** Receipt reference and round as the progress row carries them. */
-type FiledReceipt = { readonly receipt: string; readonly round?: string };
-
 /**
  * #1201 public identity of a leg's terminal: the ticket it is filed under and
  * the receipts this settle accepted. Row references resolve under the leg's
@@ -202,7 +245,7 @@ type FiledReceipt = { readonly receipt: string; readonly round?: string };
  */
 export function filedIdentity(
   runDirectory: string,
-  filed: readonly FiledReceipt[] = [],
+  filed: readonly TerminalReceiptRef[] = [],
 ): Pick<TerminalResult, "ticket" | "receipts"> {
   const subjectDirectory = subjectDirectoryOfRun(runDirectory);
   if (subjectDirectory === undefined) return {};
@@ -210,109 +253,36 @@ export function filedIdentity(
   return {
     ...(ticket === undefined ? {} : { ticket }),
     ...(filed.length === 0 ? {} : {
-      receipts: filed.map((row) => ({ ...row, receipt: join(subjectDirectory, row.receipt) })),
+      receipts: filed.map(({ receipt, round }) => ({ receipt: join(subjectDirectory, receipt), ...(round && { round }) })),
     }),
   };
 }
 
-function roleOutcomeFromRows(
-  role: TerminalRoleName,
-  rows: readonly {
-    readonly role?: TerminalRoleName;
-    readonly kind: "accepted" | "audit-escalation" | "correctable-rejection" | "infrastructure" | "candidate";
-    readonly accepted: unknown;
-    readonly auditReceipt?: unknown;
-    readonly auditOfficer?: unknown;
-    readonly toolCallId?: string;
-    readonly receipt?: string;
-    readonly round?: string;
-  }[],
-): SealedLedgerSettle | undefined {
-  const mine = rows.filter((row) => row.role === role);
-  // Terminal acceptance kind still only follows sealed / audit-escalation (#881):
-  // correctable-rejection / infrastructure / candidate stay payloads, not acceptance.
-  const terminal = mine.filter(
-    (row) => row.kind === "accepted" || row.kind === "audit-escalation",
-  );
-  if (terminal.length === 0) return undefined;
-  // Full sequence stays on payloads. The queue kind follows the latest terminal
-  // row only — an earlier escalation must not outrank a later acceptance or
-  // keep that earlier receipt (#1057).
-  const payloads = mine.map((row) => row.accepted);
-  const latest = terminal[terminal.length - 1]!;
-  const submissionToolCallId =
-    typeof latest.toolCallId === "string" && latest.toolCallId.length > 0
-      ? latest.toolCallId
-      : undefined;
-  const filed = mine.flatMap((row): FiledReceipt[] => row.receipt === undefined
-    ? []
-    : [{ receipt: row.receipt, ...(row.round === undefined ? {} : { round: row.round }) }]);
-  const belonging = {
-    ...(submissionToolCallId === undefined ? {} : { submissionToolCallId }),
-    filed,
-  };
-  if (latest.kind === "audit-escalation") {
-    return {
-      outcome: {
-        kind: "audit_escalation", role, status: "audit_escalation", payloads,
-        ...(Object.hasOwn(latest, "auditReceipt") ? { decisiveFacts: {
-          auditEscalationReceipt: latest.auditReceipt,
-          ...(Object.hasOwn(latest, "auditOfficer") ? { auditEscalationOfficer: latest.auditOfficer } : {}),
-        } } : {}),
-      },
-      ...belonging,
-    };
+export function settlementRows(admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">) {
+  return readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, {
+    home: homeFromRunDirectory(admitted.runDirectory), sessionParent: sessionFileOf(admitted.runDirectory),
+  });
+}
+
+/** The whole leg in arrival order; this court's payloads in the order `current` gives. */
+function projectOriginals(rows: readonly RecordedSubmissionRow[], current: readonly RecordedSubmissionRow[] = []) {
+  const submissions: unknown[] = [], originals = new Map<RecordedSubmissionRow, unknown>();
+  const receiptErrors: NonNullable<TerminalResult["receiptErrors"]>[number][] = [];
+  let requiredFault: LedgerFault | undefined;
+  for (const row of rows) {
+    try {
+      const original = readReceipt(row);
+      submissions.push(original);
+      originals.set(row, original);
+    } catch (error) {
+      const diagnostic = errorText(error);
+      if (current.includes(row)) requiredFault ??= { diagnostic: `${row.path}: ${diagnostic}`, cause: error };
+      receiptErrors.push({ receipt: row.path, diagnostic,
+        ...(error instanceof Error ? { identity: thrownIdentity(error) } : {}) });
+    }
   }
-  return { outcome: { kind: "accepted", role, payloads }, ...belonging };
-}
-
-async function sealedLedgerOutcome(
-  admitted: AdmittedRoleInvocation,
-  role: TerminalRoleName,
-  scope?: SettlementCourtScope,
-): Promise<SealedLedgerSettle | undefined> {
-  // #879: when court scope is present, roleOutcome is this-court original only —
-  // never last-wins over an undivided historical array, and never falls back to
-  // full-run history when this court sealed zero rows. #836 presentation of full
-  // history stays on attachRecordedSubmissions / terminal.submissions (run-scoped).
-  if (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0) {
-    const thisCourt = await readAttemptScopedSubmissionRows(
-      admitted.projectRoot,
-      admitted.runId,
-      scope.courtAttemptId,
-      ledgerReadScope(admitted, scope),
-    );
-    // Scope present + zero this-court rows → no this-court outcome (not run history).
-    return roleOutcomeFromRows(role, thisCourt);
-  }
-  // No court scope: keep run-scoped ledger face (#836).
-  const rows = await readRecordedSubmissionRows(
-    admitted.projectRoot,
-    admitted.runId,
-    ledgerReadScope(admitted, scope),
-  );
-  return roleOutcomeFromRows(role, rows);
-}
-
-/** #836: every raw role payload in settle scope (调几次记几次). */
-export async function recordedSubmissionPayloads(
-  admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
-  scope?: SettlementCourtScope,
-): Promise<readonly unknown[]> {
-  return readRecordedSubmissions(
-    admitted.projectRoot,
-    admitted.runId,
-    ledgerReadScope(admitted, scope),
-  );
-}
-
-export function withSubmissions<T extends TerminalResult>(
-  terminal: T,
-  submissions: readonly unknown[],
-): T {
-  if (submissions.length === 0) return terminal;
-  // Run history is presentation, never a substitute for this court's reply (#879).
-  return { ...terminal, submissions };
+  const history = { ...(submissions.length && { submissions }), ...(receiptErrors.length && { receiptErrors }) };
+  return { payloads: current.flatMap(row => originals.has(row) ? [originals.get(row)] : []), history, requiredFault };
 }
 
 /** Attach full ledger submissions onto any settled terminal (#836). */
@@ -320,24 +290,19 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
   terminal: T,
   scope?: SettlementCourtScope,
+  rows?: readonly RecordedSubmissionRow[],
 ): Promise<T> {
-  // #836 / #879: submissions presentation is always run-scoped history. Do not
-  // pass courtAttemptId here — roleOutcome already carries this-court payloads
-  // from sealedLedgerOutcome when scoped; withSubmissions keeps them.
-  void scope;
-  try {
-    return withSubmissions(
-      terminal,
-      await recordedSubmissionPayloads(admitted, undefined),
-    );
-  } catch (error) {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      scope,
-      `submission history read failed beside host terminal: ${describeErrorIdentity(error)}`,
-    );
-    return terminal;
-  }
+  const note = (diagnostic: string) => noteSettlementFault(admitted.runDirectory, scope, diagnostic);
+  return await besideConclusion(note, "submission history read", async () => {
+    if (!rows) {
+      const ledger = await settlementRows(admitted);
+      for (const issue of [ledger.fault, ledger.discoveryFault, ledger.malformed]) {
+        if (issue) await note(issue.diagnostic);
+      }
+      rows = ledger.rows;
+    }
+    return { ...terminal, ...projectOriginals(rows).history };
+  }) ?? terminal;
 }
 
 /**
@@ -469,30 +434,7 @@ async function settleNoReceiptTerminal(
         kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt",
         ...facts, decisiveFacts: facts,
       };
-  let attemptHistoryIdentity: string | undefined;
-  if (scope?.recordAttemptHistory === true) {
-    const pointer = await appendRunAttemptHistory(
-      attemptHistorySource(admitted, coordinates),
-      roleOutcome,
-    );
-    attemptHistoryIdentity = pointer.identity;
-  } else {
-    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
-      admitted.runDirectory,
-      scope,
-    );
-  }
-  if (scope?.previewOnly !== true) {
-    // Belonging settlement only (#1161 甲 / R2): never inherit another court's
-    // latest terminal pointer, and never invent a history row on re-projection (N1).
-    writeRunTerminal(admitted.runDirectory, "no_receipt", {
-      role: admitted.role,
-      runId: admitted.runId,
-      outcome: roleOutcome,
-      ...terminalBelongingFields(attemptHistoryIdentity, scope),
-    });
-  }
-  return attachEngineDetourToolUsage({
+  const terminal = await attachEngineDetourToolUsage({
     roleOutcome,
     navigator: isNavigatorSeat(admitted.role)
       ? NAVIGATOR_SEAT_OWN_FACT
@@ -504,6 +446,7 @@ async function settleNoReceiptTerminal(
     artifacts: [],
     ...filedIdentity(admitted.runDirectory),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
+  return publishSeatSettlement(admitted, authority, scope, { terminal });
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -521,8 +464,8 @@ import {
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalNavigatorFact,
+  type TerminalReceiptRef,
   type TerminalResult,
-  type TerminalRoleName,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
 
@@ -954,8 +897,8 @@ export function classifyPostAdmissionFailure(input: {
       packageFactsOf(input),
     );
   }
-  if (input.code !== 0) {
-    // A nonzero exit says the run failed, not why. No typed fact confirmed a
+  if (input.code !== 0 || input.cancelName !== undefined) {
+    // A nonzero exit or a cancellation says the run failed, not its class. No typed fact confirmed a
     // class, so `cause` stays absent and the CLI's own diagnostic and exit code
     // are what remains (host contract: omit cause, keep the original). A signal
     // or cancellation the host did report is named, not restated as an exit.
@@ -1190,20 +1133,9 @@ async function attachEngineDetourToolUsage<
     typeof detourContext.runDirectory === "string" && detourContext.runDirectory.length > 0
       ? detourContext.runDirectory
       : runDirectoryFromSessionDirectory(sessionDirectory);
-  let engineMounted = false;
-  try {
-    engineMounted = await readInvocationEngineMounted(runDirectory);
-  } catch (error) {
-    await noteSettlementFault(
-      runDirectory,
-      detourContext.notePackageFault === undefined
-        ? undefined
-        : { notePackageFault: detourContext.notePackageFault },
-      `engine mount read failed beside host terminal: ${describeErrorIdentity(error)}`,
-    );
-    return base;
-  }
-  if (!engineMounted) return base;
+  const note = (diagnostic: string) => noteSettlementFault(runDirectory,
+    detourContext.notePackageFault === undefined ? undefined : { notePackageFault: detourContext.notePackageFault }, diagnostic);
+  if (!await besideConclusion(note, "engine mount read", () => readInvocationEngineMounted(runDirectory))) return base;
 
   // Public-invocation scope from the shared Host envelope (settlement scope), never
   // courtAttemptId and never a detour sidecar file.
@@ -1214,27 +1146,16 @@ async function attachEngineDetourToolUsage<
       : undefined;
 
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
-  let usage: Awaited<ReturnType<typeof readEngineDetourToolUsage>>;
-  try {
-    usage = await readEngineDetourToolUsage({
-      sessionParent: sessionFile,
-      engineMounted: true,
-      ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
-      cwd: runDirectory,
-    });
-  } catch (error) {
-    await noteSettlementFault(
-      runDirectory,
-      detourContext.notePackageFault === undefined
-        ? undefined
-        : { notePackageFault: detourContext.notePackageFault },
-      `engine detour read failed beside host terminal: ${describeErrorIdentity(error)}`,
-    );
-    return base;
-  }
+  const read = await besideConclusion(note, "engine detour read", async () => ({ usage: await readEngineDetourToolUsage({
+    sessionParent: sessionFile,
+    engineMounted: true,
+    ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
+    cwd: runDirectory,
+  }) }));
+  if (read === undefined) return base;
   return {
     ...base,
-    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, usage),
+    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, read.usage),
   };
 }
 
@@ -1323,44 +1244,6 @@ async function extractNavigatorFactFromAdmittedSession(
   }
 }
 
-/**
- * Sole success-terminal publisher (#953): replace the leg's terminal in
- * current.json. The report carries the outcome's verdict facts; the role's
- * submitted payloads live in history.jsonl. The terminal names the
- * attempt-history row that belongs to this settlement — from this settle's
- * append when recording, otherwise that court's prior terminal row in
- * state.jsonl (#1161 甲 / R2). Never content-match payloads, never inherit the
- * leg's latest terminal, never invent a history row on re-projection (N1).
- */
-async function publishAcceptedTerminal(
-  admitted: AdmittedRoleInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  scope: SettlementCourtScope | undefined,
-  report: Record<string, unknown>,
-): Promise<TerminalArtifactRef[]> {
-  // #419: a dispatched turn appends before rewriting last-write-wins views;
-  // a later projection may refresh views but must not invent another attempt.
-  let attemptHistoryIdentity: string | undefined;
-  if (scope?.recordAttemptHistory === true) {
-    const pointer = await appendRunAttemptHistory(
-      attemptHistorySource(admitted, coordinates),
-      roleOutcome,
-    );
-    attemptHistoryIdentity = pointer.identity;
-  } else {
-    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
-      admitted.runDirectory,
-      scope,
-    );
-  }
-  writeRunTerminal(admitted.runDirectory, "report", {
-    ...report,
-    ...terminalBelongingFields(attemptHistoryIdentity, scope),
-  });
-  return [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }];
-}
-
 /** 甲 pointer + court tag carried on the terminal body for later re-projection. */
 function terminalBelongingFields(
   attemptHistoryIdentity: string | undefined,
@@ -1429,108 +1312,85 @@ async function belongingAttemptHistoryIdentity(
   return undefined;
 }
 
-type LawfulSessionRead =
-  | { readonly kind: "entries"; readonly entries: SessionEntry[] }
-  | { readonly kind: "absent" }
-  | { readonly kind: "fault"; readonly error: unknown };
-
-/**
- * Read session entries for lawful settlement.
- * Missing path is absence. A present file that cannot be read is a fault,
- * not a host cause and not an empty transcript.
- */
-async function readLawfulSettlementEntries(
-  sessionFile: string,
-): Promise<LawfulSessionRead> {
-  try {
-    return { kind: "entries", entries: await readBoundSessionEntries(sessionFile) };
-  } catch (error) {
-    if (isEnoent(error)) return { kind: "absent" };
-    return { kind: "fault", error };
-  }
-}
-
-function entriesOf(read: LawfulSessionRead): SessionEntry[] {
-  return read.kind === "entries" ? read.entries : [];
-}
-
 /** Sealed seats present the ledger. A session tool error does not invent a host failure. */
-async function settleSealedSeat(
+export type PreparedSeat<T extends TerminalResult = TerminalResult> = { terminal: T; report?: Record<string, unknown> };
+
+export type SeatReadFailure = { failure: ControlledFailure; history: Pick<TerminalResult, "submissions" | "receiptErrors"> };
+
+export function matchesAuditedSeal(pin: { readonly receipt: string | undefined }, row: TerminalReceiptRef): boolean {
+  return basename(row.receipt) === pin.receipt;
+}
+
+export async function preparePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
-  options: {
-    acceptedOnly: boolean;
-  },
-): Promise<TerminalResult | undefined> {
+): Promise<PreparedSeat | SeatReadFailure | { rows: readonly RecordedSubmissionRow[] }> {
+  const { rows, fault, discoveryFault, malformed, lastCourt } = await settlementRows(admitted);
+  const accepted = rows.filter(row => row.kind === "accepted" && row.role === admitted.role);
+  let attempt = scope?.courtAttemptId ?? scope?.invocationScopeId;
+  let unknownCourt = fault;
+  let current: RecordedSubmissionRow[] | undefined;
+  const pin = scope?.seal === "latest" ? undefined : scope?.seal;
+  if (scope?.seal) {
+    const seal = pin && accepted.find(row => matchesAuditedSeal(pin, row));
+    if (pin) current = seal ? [seal] : [];
+    attempt = !pin && typeof lastCourt === "string" ? lastCourt : seal?.attemptId;
+    if (!pin && typeof lastCourt === "object") unknownCourt ??= lastCourt;
+    if (attempt) scope = { ...scope, courtAttemptId: attempt };
+  }
+  // This court's result, route and filed reference follow its seals, not file numbers.
+  current ??= accepted.filter(row => attempt !== undefined && row.attemptId === attempt)
+    .sort((a, b) => (a.sealedAt ?? 0) - (b.sealedAt ?? 0));
+  unknownCourt ??= rows.find(row => row.dispositionFault && (pin
+    ? matchesAuditedSeal(pin, row) : attempt !== undefined && row.attemptId === attempt))?.dispositionFault;
+  for (const issue of [discoveryFault, malformed]) {
+    if (issue && issue !== unknownCourt) await noteSettlementFault(admitted.runDirectory, scope, issue.diagnostic);
+  }
+  if (!current.length && !unknownCourt) return { rows };
+  const { payloads, history, requiredFault } = projectOriginals(rows, current);
+  const failed = unknownCourt ?? requiredFault;
+  if (failed) return { history, failure: { ...projectThrownFailureLeaf(failed.cause), diagnostic: failed.diagnostic } };
+  const roleOutcome = { kind: "accepted" as const, role: admitted.role, payloads };
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const settled = await sealedLedgerOutcome(admitted, admitted.role, scope);
-  if (settled === undefined || (options.acceptedOnly && settled.outcome.kind !== "accepted")) {
-    return undefined;
+  let entries: SessionEntry[] = [];
+  let navigator = NAVIGATOR_SEAT_OWN_FACT;
+  if (!isNavigatorSeat(admitted.role)) {
+    try {
+      entries = await readBoundSessionEntries(coordinates.sessionFile);
+    } catch (error) {
+      if (!isEnoent(error)) await noteSettlementFault(admitted.runDirectory, scope,
+        `session read failed beside lawful terminal: ${describeErrorIdentity(error)}`);
+    }
+    navigator = extractNavigatorFact(entries);
   }
-  const read = await readLawfulSettlementEntries(coordinates.sessionFile);
-  if (read.kind === "fault") {
-    await noteSettlementFault(
-      admitted.runDirectory,
-      scope,
-      `session read failed beside lawful terminal: ${describeErrorIdentity(read.error)}`,
-    );
-  }
-  return finishLawfulSeat(
-    admitted,
-    coordinates,
-    entriesOf(read),
-    settled.outcome,
-    scope,
-    settled.submissionToolCallId,
-    settled.filed,
-  );
-}
-
-async function finishLawfulSeat(
-  admitted: AdmittedRoleInvocation,
-  coordinates: DurablePrincipalCoordinates,
-  entries: readonly SessionEntry[],
-  roleOutcome: TerminalRoleOutcome,
-  scope: SettlementCourtScope | undefined,
-  submissionToolCallId?: string,
-  filed?: readonly FiledReceipt[],
-): Promise<TerminalResult> {
-  const artifacts = scope?.previewOnly === true
-    ? []
-    : await publishDeclaredSeatTerminal(admitted, roleOutcome, coordinates, entries, scope);
   const terminal = await attachEngineDetourToolUsage({
-    roleOutcome,
-    navigator: isNavigatorSeat(admitted.role) ? NAVIGATOR_SEAT_OWN_FACT : extractNavigatorFact(entries),
-    artifacts,
-    ...filedIdentity(admitted.runDirectory, filed),
-    ...(submissionToolCallId === undefined || submissionToolCallId.length === 0
-      ? {}
-      : { submissionToolCallId }),
+    ...history, roleOutcome,
+    navigator,
+    artifacts: [],
+    ...filedIdentity(admitted.runDirectory, current),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
-  return attachRecordedSubmissions(admitted, terminal, scope);
+  return { terminal, report: declaredSeatReport(admitted, roleOutcome, entries, scope) };
 }
 
-/**
- * One settlement for every registered seat. The registry `settlement` leaf
- * picks the sealed ledger or the accepted-tool ledger.
- * Seat evidence stays on the artifact face.
- */
-async function settleSeat(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope: SettlementCourtScope | undefined,
-): Promise<TerminalResult | undefined> {
-  const record = packagedRoleMetadata(admitted.role);
-  if (record === undefined) {
-    throw new Error(`no settlement for ${admitted.role}`);
-  }
-  if (record.settlement === "accepted") {
-    return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
-  }
-  return settleSealedSeat(admitted, authority, scope, {
-    acceptedOnly: "sealedAcceptedOnly" in record && record.sealedAcceptedOnly === true,
+/** The cancellation check and previews do not change the already computed verdict. */
+export async function publishSeatSettlement<T extends TerminalResult>(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority,
+  scope: SettlementCourtScope | undefined, { terminal, report }: PreparedSeat<T>): Promise<T> {
+  if (scope?.previewOnly) return terminal;
+  const published = await besideConclusion((diagnostic) => noteSettlementFault(admitted.runDirectory, scope, diagnostic), "terminal publication", async () => {
+    if (report !== undefined) {
+      writeRunTerminal(admitted.runDirectory, "report", report);
+      return { ...terminal, artifacts: [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }] };
+    }
+    const identity = scope?.recordAttemptHistory
+      ? (await appendRunAttemptHistory(attemptHistorySource(admitted, coordinatesFromAdmitted(authority, admitted)), terminal.roleOutcome)).identity
+      : await belongingAttemptHistoryIdentity(admitted.runDirectory, scope);
+    writeRunTerminal(admitted.runDirectory, "no_receipt", {
+      role: admitted.role, runId: admitted.runId, outcome: terminal.roleOutcome, ...terminalBelongingFields(identity, scope),
+    });
+    return terminal;
   });
+  return published ?? terminal;
 }
 
 /**
@@ -1581,26 +1441,26 @@ function doctorReportFacts(
   };
 }
 
-async function publishDeclaredSeatTerminal(
+function declaredSeatReport(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
   scope: SettlementCourtScope | undefined,
-): Promise<TerminalArtifactRef[]> {
+): Record<string, unknown> {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
     ? { phase: (admitted as { phase?: unknown }).phase }
     : {};
-  // Payloads are the role's submitted words: they live in history.jsonl, not here.
+  // The seal names the original. The terminal carries verdict facts only.
   const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
-  return publishAcceptedTerminal(admitted, roleOutcome, coordinates, scope, {
+  return {
     role: admitted.role,
     runId: admitted.runId,
     ...phase,
     outcome: verdict,
     ...doctorReportFacts(face, roleOutcome, entries),
-  });
+    ...terminalBelongingFields(undefined, scope),
+  };
 }
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */
@@ -1614,27 +1474,6 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
-/** Accepted-tool seats: declaration checks only. Other-seat finals stay on their own runs. */
-async function trySettleAcceptedSeatTerminalResult(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const toolName = packagedRoleAcceptedOutputTool(admitted.role);
-  if (toolName === undefined) {
-    throw new Error(`accepted-seat settlement is not declared for ${admitted.role}`);
-  }
-  return settleSealedSeat(admitted, authority, scope, { acceptedOnly: false });
-}
-
-/** One settlement dispatch. The registry `settlement` leaf selects the path. */
-export async function trySettlePublicSeat(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope: SettlementCourtScope | undefined,
-): Promise<TerminalResult | undefined> {
-  return settleSeat(admitted, authority, scope);
-}
 
 /**
  * Replace the leg's terminal with the controlled failure. A write failure
@@ -1711,18 +1550,9 @@ export async function settleFailureTerminalResult(
       admitted.runDirectory,
       options,
     );
-  let artifacts: TerminalArtifactRef[] = [];
-  if (options.previewOnly !== true) {
-    try {
-      artifacts = await publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options);
-    } catch (error) {
-      await noteSettlementFault(
-        admitted.runDirectory,
-        options,
-        `failure artifact publication failed beside host terminal: ${describeErrorIdentity(error)}`,
-      );
-    }
-  }
+  const artifacts: TerminalArtifactRef[] = options.previewOnly === true ? [] : await besideConclusion(
+    (diagnostic) => noteSettlementFault(admitted.runDirectory, options, diagnostic), "failure artifact publication",
+    () => publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options)) ?? [];
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
@@ -1757,17 +1587,16 @@ export async function settleFailureTerminalResult(
 }
 
 /**
- * Emit one complete failure Terminal on stdout and one concise stderr diagnostic.
+ * Emit the concise stderr diagnostic beside a settled failure volume.
  * Artifacts are already durable on the TerminalResult.
  */
-export function presentFailureTerminal(
+export function presentFailureDiagnostic(
   terminal: TerminalResult,
-  io: { stdout: (text: string) => void; stderr: (text: string) => void; omitFailureStderrDiagnostic?: boolean },
+  io: Pick<import("./cli-io.ts").CliIo, "stderr" | "omitFailureStderrDiagnostic">,
 ): void {
   if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
-    throw new TypeError("presentFailureTerminal requires a failure or no-receipt role outcome");
+    throw new TypeError("presentFailureDiagnostic requires a failure or no-receipt role outcome");
   }
-  io.stdout(formatTerminalResult(terminal));
   if (terminal.roleOutcome.kind === "failure") {
     if (io.omitFailureStderrDiagnostic) return;
     const hostStderr = terminal.roleOutcome.decisiveFacts.stderr;

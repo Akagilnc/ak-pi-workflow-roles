@@ -28,10 +28,7 @@ import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import {
   runPublicInstructionSeat,
 } from "../../src/public-cli/instruction-seat-run.ts";
-import {
-  attachRecordedSubmissions,
-  trySettlePublicSeat,
-} from "../../src/public-cli/settlement.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
@@ -348,17 +345,10 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-2" },
     );
-    assert.equal(settled!.roleOutcome.kind, "accepted");
-    if (settled!.roleOutcome.kind === "accepted") {
-      assert.deepEqual(settled!.roleOutcome.payloads, [second]);
-    }
-    const withHistory = await attachRecordedSubmissions(admitted, settled!, {
-      courtAttemptId: "court-2",
-    });
-    assert.deepEqual(withHistory.submissions, [first, second]);
-    if (withHistory.roleOutcome.kind === "accepted") {
-      assert.deepEqual(withHistory.roleOutcome.payloads, [second]);
-    }
+    assert.ok(settled);
+    assert.equal(settled.roleOutcome.kind, "accepted");
+    assert.deepEqual(settled.roleOutcome.payloads, [second]);
+    assert.deepEqual(settled.submissions, [first, second]);
 
     const emptyCourt = await trySettlePublicSeat(
       admitted,
@@ -380,7 +370,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       runDirectory: join(root, "parent-run"),
       summonOfficer: async () => ({
         exitCode: 0,
-        terminal: withHistory,
+        terminal: settled,
       }),
     });
     assert.equal(projected.result.status, "continue");

@@ -1,11 +1,11 @@
-import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { statSync } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdirSync, statSync } from "node:fs";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -22,7 +22,6 @@ import {
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
@@ -34,17 +33,27 @@ import {
   assertPublicFailureSettlement,
 } from "../helpers/failure-settlement-kit.ts";
 
-test("public report publication failure stays beside the accepted terminal", async () => {
-  // Lock current.json after the turn so the terminal write fails. The host already
-  // accepted; that terminal stays, and the write failure is a cleanup diagnostic.
+test.each([
+  { step: "terminal publication", seat: "collector", failing: "collector" },
+  { step: "afterDispatch", seat: "collector", failing: "collector" },
+  { step: "terminal publication", seat: "judge", failing: "auditor" },
+] as const)("public $step failure of $failing stays beside the accepted terminal and reaches the caller", async ({ step, seat, failing }) => {
+  // After the seal, either the terminal write (current.json locked) or the
+  // ticket placement (the leg's progress staging taken by a directory) fails —
+  // on the called seat, or on a gate officer it summoned in the same call.
+  // The host already accepted; that terminal stays, and the caller is told the
+  // cause the dossier keeps — from the first call's quiet attempt io and from a
+  // quiet nested seat too.
   // Collector: a seat with no gate officers, so the terminal write is the only
   // dossier write between the turn and the leg's own lawful persist.
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io } = captureIo();
+    await configurePassingReviewSeats(home);
+    const { io, stderr } = captureIo();
     let lockedCurrent: string | undefined;
+    let failingRun: string | undefined;
     const runId = "run-audit-artifact-errno-001";
     const details = {
       host: "github.com",
@@ -56,7 +65,11 @@ test("public report publication failure stays beside the accepted terminal", asy
       unfinishedReasons: [],
     };
     try {
-      const inner = roleTurnHostFromLegacyPiRunner({
+      const inner = seat === "judge" ? withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: scriptedTerminatingToolSession({ role: "judge", toolName: JUDGE_OUTPUT_TOOL_NAME, details: { status: "converged" } }),
+      })) : roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async (args) => {
@@ -76,7 +89,9 @@ test("public report publication failure stays beside the accepted terminal", asy
         },
       });
       const result = await runAkRole(
-        ["collector", "--model", "test/caller-seat:high", "--pr", "1168", "--repo", "acme/widgets", "--project", project],
+        seat === "judge"
+          ? ["judge", "--model", "test/caller-seat:high", "--project", project, "Decide."]
+          : ["collector", "--model", "test/caller-seat:high", "--pr", "1168", "--repo", "acme/widgets", "--project", project],
         {
           packageRoot,
           home,
@@ -90,7 +105,13 @@ test("public report publication failure stays beside the accepted terminal", asy
           roleTurnHost: {
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
-              // The seal is on the record; the leg's terminal write is next.
+              if (request.activation.role !== failing) return out;
+              failingRun = request.runDirectory;
+              // The seal is on the record; the leg's terminal write and placement are next.
+              if (step === "afterDispatch") {
+                mkdirSync(join(request.runDirectory, "progress.jsonl"), { recursive: true });
+                return out;
+              }
               lockedCurrent = join(request.runDirectory, "current.json");
               lockCurrentJson(dirname(lockedCurrent));
               return out;
@@ -100,27 +121,14 @@ test("public report publication failure stays beside the accepted terminal", asy
       );
       assert.equal(result.exitCode, 0);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.roleOutcome.role, seat);
       assert.equal(result.terminal?.ticket, 1171);
-      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
-      const runDirectory =
-        (await findRunDirectoryById(home, runId))
-        ?? join(
-          home,
-          ".ak-roles",
-          "books",
-          resolveBookKeyFromGit(project),
-          "unbound",
-          "runs",
-          `${runId}@collector`,
-        );
-      const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-        .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-        ?.data?.diagnostic;
-      assert.equal(typeof noteText, "string");
+      const runDirectory = failingRun!;
+      const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof noteText === "string" && noteText !== "", "the retained cause is not empty");
+      // Delivery, not wording: the caller was handed the fault on stderr.
+      assert.ok(stderr.join("").length > 0, "the caller is told the fault");
+      if (step === "afterDispatch") return;
       // The injected failure really fired: the accepted terminal FACT is a history
       // row, but its rendering was refused (current.json is still the planted directory).
       const recorded = statePayloads<{ face?: string }>(runDirectory, "terminal");
@@ -598,7 +606,7 @@ test("a sealed receipt stays recorded when the host CLI reported a nonzero exit"
     const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
     let config = { seats: {} };
     for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
-    await savePublicCliConfig(config, home);
+    await savePublicCliConfig({ ...config, autoResumeLimit: 0 }, home);
     const { io } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
       {

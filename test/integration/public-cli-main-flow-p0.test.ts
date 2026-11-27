@@ -16,7 +16,7 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-ou
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -108,8 +108,8 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     assert.equal(first.terminal.ticket, TICKET);
     assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(first.terminal.roleOutcome), ["escalate"]);
-    const recorded = await readRecordedSubmissionRows(project, runId, home);
-    assert.deepEqual(recorded.map(({ kind, accepted }) => ({ kind, accepted })), [
+    const { rows: recorded } = await readRecordedSubmissionRows(project, runId, home);
+    assert.deepEqual(recorded.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadableDetails },
       { kind: "accepted", accepted: escalateDetails },
     ]);
@@ -168,9 +168,8 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
             role: "judge",
             details: convergedDetails,
             toolCallId: "call_judge_ruling",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),

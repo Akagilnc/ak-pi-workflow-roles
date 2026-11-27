@@ -1,16 +1,15 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import { auditorRunDirectory } from "./role-run-placement.ts";
-import { packagedGateStageLabel, receiptStatus } from "./packaged-role-registry.ts";
+import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
-import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
 import { roleSubmissionDeclaration } from "./role-submission-declarations.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import { currentReplyRows, type TerminalResult } from "./public-cli/terminal.ts";
+import { currentReplyRows, returnedReceiptStatus, type TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { serializeThrownValue } from "./serialize-thrown-value.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
@@ -20,9 +19,8 @@ export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export type GateOfficer = "inspector" | "notary" | "auditor" | "countersign";
 
 /**
- * Officer routing only. Ordinary audit dialogue is the parent submission body
- * (or ticket-court blind materials for notary); code does not open a second
- * run-dossier content channel here.
+ * Officer routing only. The officer reads the audited receipt itself (ADR 0085);
+ * code does not open a content channel here.
  */
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion" }
@@ -110,16 +108,12 @@ export type GateOfficerSummon = (
    * conclusion (#753 / #756). Hosted as same-ticket resume instruction.
    */
   reask?: string,
-  /**
-   * In-flight parent 交卷 body (tool-call arguments). Production default relays
-   * it verbatim on the officer dialogue content channel (#786 / #879).
-   * Identity-bound at the submit site — never recovered as latest toolCall.
-   */
+  /** In-flight parent 交卷; only its declared ticket is read (countersign binding). */
   submission?: unknown,
 ) => Promise<PublicSummonResult>;
 
 export type RunGatekeeperOptions = {
-  readonly context: ExtensionContext | HostContext;
+  readonly context: Pick<HostContext, "cwd"> & Parameters<typeof auditorRunDirectory>[0];
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
   /** Run directory of the parent role (binding pointer, ADR 0079 / #879). */
@@ -128,11 +122,7 @@ export type RunGatekeeperOptions = {
    * Plain-language re-ask for this summon (resume speaker after non-three-state).
    */
   readonly reask?: string;
-  /**
-   * In-flight parent typed payload for this gate turn. Relayed verbatim as
-   * officer dialogue content (#879). Call site passes the current tool args —
-   * code must not scan session latest/mtime to recover it.
-   */
+  /** In-flight parent 交卷 for this gate turn; see GateOfficerSummon. */
   readonly submission?: unknown;
   /**
    * Officer summon seam. Production default lives on the shared envelope
@@ -153,66 +143,12 @@ export type GatekeeperRuntimeDependencies = {
   loadSoul(): Promise<string>;
 };
 
-/** Original decision bytes — no sentinel replacement (#836). */
-function retainedReceipt(decision: unknown): unknown {
-  return decision;
-}
-
-/**
- * Read only the conclusion field for queueing (#753).
- * converged | continue | escalate → queue signal + raw receipt.
- * Anything else accepted → needs_reask (resume speaker), never unreadable/parent-stand.
- * `fallbackStatus` is the terminal outcome.status when the receipt body has no status key
- * (keeps missing-args sentinel intact as the receipt).
- */
-/** Map the shared review verdict onto the gate queue words (#1028 / #1055). */
-function reviewQueueStatus(status: string): string | undefined {
-  return REVIEW_QUEUE_STATUSES.has(status) ? status : undefined;
-}
-
-function projectOfficerDecision(
-  officer: GateOfficer,
-  decision: unknown,
-  fallbackStatus?: string,
-): GatekeeperResult {
-  const receipt = retainedReceipt(decision);
-  const received = receiptStatus(decision);
-  const status = received === undefined ? fallbackStatus : received;
-  const queueStatus = typeof status === "string" ? reviewQueueStatus(status) : undefined;
-  if (queueStatus === "converged") {
-    return { status: "converged", officer, receipt };
-  }
-  if (queueStatus === "continue" || queueStatus === "escalate") {
-    return { status: queueStatus, officer, receipt };
-  }
-  return { status: "needs_reask", officer, receipt, receivedStatus: status };
-}
-
-/**
- * This-court officer payloads for the parent return path (#879).
- * Only settlement-scoped roleOutcome.payloads (courtAttempt seal) carry this-court
- * identity. Never guess from undivided submissions — sole row included — history
- * stays on terminal.submissions (#836 presentation).
- */
 /**
  * Failure/transport channel surfaces recorded history beside the failure
  * (#836 A.3) via the historical carrier only (#953 — not failure.payloads).
  */
 function officerFailurePayloads(terminal: TerminalResult | undefined): readonly unknown[] {
   return terminal?.submissions ?? [];
-}
-
-function projectOfficerPayloads(
-  officer: GateOfficer,
-  payloads: readonly unknown[],
-  fallbackStatus?: string,
-): GatekeeperResult {
-  if (payloads.length === 0) {
-    return projectOfficerDecision(officer, undefined, fallbackStatus);
-  }
-  // This-court multi-submit: queue the latest seal of THIS court only (#836 呈现≠排队).
-  // Single this-court seal is the common path. Never fold history into an array receipt.
-  return projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
 }
 
 /** Nested officer runId from the summoned leg's run directory (package-internal resume identity). */
@@ -284,44 +220,20 @@ function projectOfficerTerminal(
         // This-court receipt only (#879) — historical rows remain on terminal.submissions.
         receipt: outcome.decisiveFacts !== undefined && Object.hasOwn(outcome.decisiveFacts, "auditEscalationReceipt")
           ? outcome.decisiveFacts.auditEscalationReceipt
-          : thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+          : thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : outcome,
       },
       summoned,
     );
   }
-  if (outcome.kind === "accepted") {
-    // Nested / prior incomplete (directionUnsettled) is not a gate pass (ADR 0055).
-    // Receipt stays this-court or retained; runId comes from the summoned volume.
-    // No parent-side officerPayloads / officerRunId copies (#1195).
-    if (outcome.decisiveFacts?.directionUnsettled === true) {
-      const receipt = thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);
-      return withOfficerRunId(
-        {
-          status: "needs_reask",
-          officer,
-          receipt,
-          receivedStatus: receiptStatus(receipt),
-        },
-        summoned,
-      );
-    }
-    // outcome.status is the fixture/compat leaf: production settlement leaves
-    // it undefined once payloads are recorded. It may interpret a receipt
-    // lacking its own status, never substitute for a missing receipt.
-    return withOfficerRunId(
-      projectOfficerPayloads(officer, thisCourt, outcome.status),
-      summoned,
-    );
-  }
-  const receipt = thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);
+  const unsettled = outcome.decisiveFacts?.directionUnsettled === true;
+  const receipt = unsettled && !thisCourt.length ? outcome : thisCourt.at(-1);
+  const received = returnedReceiptStatus(summoned, () => receipt);
+  // Independent fixture terminals may carry the word on outcome instead of the receipt.
+  const status = received === undefined && !unsettled ? outcome.status : received;
   return withOfficerRunId(
-    {
-      status: "needs_reask",
-      officer,
-      // This-court receipt only (#879).
-      receipt,
-      receivedStatus: receiptStatus(receipt),
-    },
+    !unsettled && (status === "converged" || status === "continue" || status === "escalate")
+      ? { status, officer, receipt }
+      : { status: "needs_reask", receivedStatus: status, officer, receipt },
     summoned,
   );
 }
@@ -333,6 +245,12 @@ export type GatekeeperProjection = {
   /** Present only when a public summon actually returned (not transport pre-summon failure). */
   readonly summoned?: PublicSummonResult;
 };
+
+/** A seat that already exhausted its reasks stops the enclosing audit too. */
+export function canReaskOfficer(summoned: PublicSummonResult | undefined, spent: number, limit: number): boolean {
+  const outcome = summoned?.terminal?.roleOutcome;
+  return spent < limit && !(outcome?.kind === "accepted" && outcome.decisiveFacts?.directionUnsettled === true);
+}
 
 /**
  * Officer conclusion was missing or not a queue word (#1055).
@@ -362,8 +280,7 @@ export async function projectGatekeeperRun(
       },
     };
   }
-  // #879: binding pointer = parent run directory; dialogue content = this-turn
-  // typed payload passed explicitly (never latest-toolCall recovery, A7.1–A7.3).
+  // #879: binding pointer = parent run directory.
   let summoned: PublicSummonResult;
   try {
     summoned = await options.summonOfficer(

@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, sessionFaultNotes, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -30,7 +30,6 @@ import {
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 
@@ -500,7 +499,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
         packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io,
         roleTurnHost: createMinimalHost(async (request) => {
           if (request.activation.role === "auditor") {
-            const rows = await readRecordedSubmissionRows(project, runId, home);
+            const { rows } = await readRecordedSubmissionRows(project, runId, home);
             assert.equal(rows.filter((row) => row.kind === "accepted").length, reviewCalls + 1);
             return auditorHost.executeTurn(request);
           }
@@ -518,6 +517,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
           await sealAcceptedSubmission({
             cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
             role: "doctor", details, toolCallId: `doctor-${index}`,
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
             ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
           });
           return { code: 0, stderr: "", timedOut: false };
@@ -563,7 +563,7 @@ test("Doctor Auditor escalation resumes the officer and settles without Doctor r
     const host = createMinimalHost(async (request) => {
       if (request.activation.role === "auditor") {
         auditorRunId = runIdFromRunDirectory(request.runDirectory);
-        assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.kind, "accepted");
+        assert.equal((await readRecordedSubmissionRows(project, runId, home)).rows.at(-1)?.kind, "accepted");
         return auditorHost.executeTurn(request);
       }
       doctorCalls++;
@@ -575,6 +575,7 @@ test("Doctor Auditor escalation resumes the officer and settles without Doctor r
       await sealAcceptedSubmission({
         cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
         role: "doctor", details, toolCallId: "doctor-only",
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
         ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
       });
       return { code: 0, stderr: "", timedOut: false };
@@ -645,6 +646,7 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
       await sealAcceptedSubmission({
         cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
         role: "doctor", details, toolCallId: `doctor-open-escalate-${doctorCalls}`,
+        ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
         ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
       });
       return { code: 0, stderr: "", timedOut: false };
@@ -782,15 +784,9 @@ test(mode === "rows"
       assert.deepEqual(statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
     }
-    const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-      .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-      ?.data?.diagnostic;
-    assert.equal(typeof noteText, "string");
-    assert.ok((await readRecordedSubmissionRows(project, runId, home)).some((row) => row.kind === "accepted"));
+    const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+    assert.ok(typeof noteText === "string" && noteText !== "");
+    assert.ok((await readRecordedSubmissionRows(project, runId, home)).rows.some((row) => row.kind === "accepted"));
   });
 });
 }

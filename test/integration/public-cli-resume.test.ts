@@ -1,8 +1,7 @@
-import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, seedCurrentSection, submittedParams, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, sessionFaultNotes, seedCurrentSection, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 
-import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 /**
  * Public manual resume passthrough and host-failure settlement.
  * Seams: run-lifecycle / runAkRole(judge|resume) with injectable Pi runner.
@@ -27,7 +26,6 @@ import { createMinimalHost, roleTurnHostFromLegacyPiRunner as rawRoleTurnHostFro
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
   describeErrorIdentity,
@@ -36,11 +34,10 @@ import {
   readRoleRunState,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
-import { trySettlePublicSeat } from "../../src/public-cli/settlement.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { readRecordedSubmissions } from "../../src/submission-ledger.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { readSitianRecords, resolveSitianRecordPath, resolveSitianRecordPathInLedger } from "../../src/sitian-facade.ts";
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
@@ -227,21 +224,7 @@ test("quota-like prose does not replace the host's unclassified failure", async 
     assert.equal(durable?.state, "terminal");
   });
 });
-async function assertCleanupDiagnosticNoted(
-  sessionFile: string,
-): Promise<void> {
-  const entries = (await readFile(sessionFile, "utf8"))
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-  const diagnostic = entries.find(
-    (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
-  );
-  assert.equal(typeof diagnostic?.data?.diagnostic, "string");
-}
-
-test("lawful settlement keeps the accepted terminal when publication fails; resume rebuilds the report", async () => {
+test("lawful settlement keeps the accepted terminal when publication fails; a bare resume that receives nothing does not re-present it", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -281,24 +264,22 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`);
       // #1199 leg-local session/ via placement helpers.
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
-      assert.ok((await readRecordedSubmissions(project, runId, home)).length > 0, "recorded accepted payload must survive publication failure");
+      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof note === "string" && note !== "");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
         .map((payload) => payload.outcome?.kind);
-      assert.deepEqual(historyOutcomes(), ["accepted"],
-        "the sealed attempt is recorded once; publication failure is not a second attempt");
+      assert.deepEqual(historyOutcomes(), [], "a seal is not copied into settlement history");
 
       // The accepted terminal FACT is recorded as a history row; only its rendering
       // was refused (the cleanup note above proves the refusal fired).
-      const reportPath = join(runDirectory, "current.json");
       const recordedTerminals = statePayloads<{ face?: string }>(runDirectory, "terminal");
       assert.deepEqual(recordedTerminals.map((terminal) => terminal.face), ["report"]);
 
-      // Unlock so bare resume can rebuild the public report from sealed facts.
       await restoreWritable();
 
-      // #833 / #672 US6: bare resume reaches host; settlement rebuilds public report.
+      // #833: bare resume reaches host. It received nothing, so the earlier verdict is
+      // history, not this answer (#1298: 本庭零收卷也不能拿上庭顶替).
       let resumeDispatches = 0;
       const passthroughHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -324,45 +305,13 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       });
       assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
       assert.equal(rebuilt.exitCode, 0);
-      assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
-      if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
-        assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-        assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
-        assert.equal(
-          (objectPayloads(rebuilt.terminal!.roleOutcome)[0] ?? {}).note,
-          "lawful despite later publication failure",
-        );
-      }
-      // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
-      const reportBody = terminalBodyAt(reportPath, "report") as {
-        role?: string;
-        runId?: string;
-        outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
-      };
-      assert.equal(reportBody.role, "judge");
-      assert.equal(reportBody.runId, runId);
-      assert.equal(reportBody.outcome?.kind, "accepted");
-      assert.equal(reportBody.outcome?.role, "judge");
-      assert.equal("payloads" in (reportBody.outcome ?? {}), false);
-      assert.equal(
-        (submittedParams(runDirectory).at(-1) as { note?: string } | undefined)?.note,
-        "lawful despite later publication failure",
-      );
-      assert.ok(
-        rebuilt.terminal!.artifacts.some((a) => a.kind === "report" && a.path === reportPath),
-        "rebuilt terminal must reference the public report artifact",
-      );
-      assert.ok(
-        (await readRecordedSubmissions(project, runId, home)).length > 0,
-        "recorded accepted payload must remain after report rebuild",
-      );
-      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
-        "the actual resume adds its own accepted attempt");
+      assert.equal(rebuilt.terminal!.roleOutcome.kind, "no_receipt");
+      assert.deepEqual(rebuilt.terminal!.submissions, [{ status: "converged", note: "lawful despite later publication failure" }]);
+      assert.deepEqual(historyOutcomes(), ["no_receipt"], "bare resume does not record a duplicate seal");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(historyOutcomes(), ["accepted", "accepted"],
-        "re-reading the latest seal must not append another attempt");
+      assert.deepEqual(historyOutcomes(), ["no_receipt"], "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreWritable();
     }
@@ -426,11 +375,12 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
           "unbound", "runs",
           `${runId}@judge`,
         );
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
-      assert.ok(
-        (await readRecordedSubmissions(project, runId, home)).length > 0,
-        "recorded accepted payload must survive a later persist failure",
-      );
+      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof note === "string" && note !== "");
+      const seals = historyPayloads<{ receipt: string }>(runDirectory, "sealed");
+      assert.equal(seals.length, 1);
+      assert.deepEqual(JSON.parse(await readFile(join(runDirectory, "../..", seals[0]!.receipt), "utf8")),
+        { status: "converged", note: "lawful then dispatch throws after seal" });
     } finally {
       await restoreWritable();
     }
@@ -467,10 +417,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
               const ledgerFile = join(request.runDirectory, "history.jsonl");
               await rm(ledgerFile, { force: true });
               await mkdir(ledgerFile, { recursive: true });
-              await assert.rejects(
-                () => readRecordedSubmissions(project, runId, home),
-                (error: NodeJS.ErrnoException) => error.code === "EISDIR",
-              );
               return out;
             },
           },
@@ -489,13 +435,14 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
       // mutation (quality-law), not by counting free-text stderr diagnostics.
       const current = readCurrentJson(runDirectory) as { unreadable?: Record<string, string> };
       assert.deepEqual(current.unreadable, { "history.jsonl": "EISDIR" });
-      // Ledger damage is a package note. It does not invent a host failure,
-      // and a lawful no_receipt stops the loop.
+      // An unreadable seal ledger is not proof of an empty court. Keep the original and the actual I/O error.
       assert.equal(dispatches(), 1);
-      assert.equal(result.exitCode, 0);
+      assert.equal(result.exitCode, 1);
       assert.equal(result.terminal!.autoResumeCount, 0);
-      assert.equal(result.terminal!.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
+      assert.equal(result.terminal!.roleOutcome.kind, "failure");
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.deepEqual(result.terminal!.submissions, [JSON.parse(await readFile(join(runDirectory, "receipts/1.json"), "utf8"))]);
+      assert.deepEqual(result.terminal!.receipts ?? [], []);
 
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
@@ -522,9 +469,12 @@ test("lawful settlement keeps the accepted terminal when publication fails; resu
         }),
       });
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
-      assert.equal(resumeResult.exitCode, 0);
-      assert.equal(resumeResult.terminal?.roleOutcome.kind, "no_receipt");
-      await assertCleanupDiagnosticNoted(sessionFileOf(runDirectory));
+      assert.equal(resumeResult.exitCode, 1);
+      assert.equal(resumeResult.terminal?.roleOutcome.kind, "failure");
+      assert.equal(resumeResult.terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.deepEqual(resumeResult.terminal.submissions, result.terminal!.submissions);
+      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof note === "string" && note !== "");
       assert.deepEqual(
         (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,
         { "history.jsonl": "EISDIR" },
@@ -1129,15 +1079,8 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
         const liveRunDirectory =
           (await findRunDirectoryById(home, runId)) ?? runDirectory;
-        const entries = (await readFile(sessionFileOf(liveRunDirectory), "utf8"))
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
-        const text = entries.find(
-          (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
-        )?.data?.diagnostic;
-        assert.equal(typeof text, "string");
+        const note = sessionFaultNotes(sessionFileOf(liveRunDirectory))[0]?.diagnostic;
+        assert.ok(typeof note === "string" && note !== "");
       },
       async () => {
         await lease.release();
@@ -1850,7 +1793,7 @@ test("public resume failures persist structured diagnostics", async () => {
         );
         const record = diagnostics[diagnosticsBefore.length]!;
         assert.equal(record.runId, runId);
-        assert.equal(typeof record.diagnostic, "string");
+        assert.ok(typeof record.diagnostic === "string" && record.diagnostic !== "");
         assert.equal(
           record.details !== null && typeof record.details === "object" && !Array.isArray(record.details),
           true,
@@ -2000,7 +1943,7 @@ test("public resume failures persist structured diagnostics", async () => {
       assert.equal(parentDiagnostics.length, parentDiagnosticsBefore.length + 1);
       const parentDiagnostic = parentDiagnostics[parentDiagnosticsBefore.length]!;
       assert.equal(parentDiagnostic.runId, "1058-parent-preload-failure");
-      assert.equal(typeof parentDiagnostic.diagnostic, "string");
+      assert.ok(typeof parentDiagnostic.diagnostic === "string" && parentDiagnostic.diagnostic !== "");
       assert.equal(
         parentDiagnostic.details !== null
           && typeof parentDiagnostic.details === "object"

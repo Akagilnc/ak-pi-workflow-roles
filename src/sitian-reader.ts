@@ -66,15 +66,16 @@ export function parseSitianRecordText(text: string): SitianReadResult {
   const lines = text.split("\n");
   const records: SitianRecord[] = [];
   const diagnostics: SitianMalformedDiagnostic[] = [];
+  let lastGap: number | undefined;
 
   for (let index = 0; index < lines.length; index += 1) {
     const decoded = decodeSitianRecordLine(lines[index]!, index + 1);
     if (decoded === undefined) continue;
     if (decoded.ok) records.push(decoded.record);
-    else diagnostics.push(decoded.diagnostic);
+    else { diagnostics.push(decoded.diagnostic); lastGap = records.length; }
   }
 
-  return { records, diagnostics };
+  return { records, diagnostics, ...(lastGap === undefined ? {} : { lastGap }) };
 }
 
 /** Read a Sitian record volume with full traversal and non-destructive diagnostics. */

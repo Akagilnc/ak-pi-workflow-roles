@@ -4,7 +4,7 @@
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
 import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-import { historyPayloads, readCurrentJson, readCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, submittedParams, readCurrentJson, readCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -27,7 +27,7 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { createSubmissionLedgerHost, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { createSubmissionLedgerHost, readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { roleRunPlacement, sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { readTicketProvenanceRecords as readTicketProvenance } from "../helpers/ticket-provenance-fixture.ts";
@@ -124,6 +124,8 @@ function diaristEnvelopeRunner(
     // #1183: mid-turn ticket relocate (bounds-reask identity) updates HostContext
     // like production report-ticket — session handles and env must follow.
     const ctx = {
+      invocationScopeId: options.env.AK_ROLE_INVOCATION_SCOPE,
+      courtAttemptId: options.env.AK_ROLE_COURT_ATTEMPT,
       get runDirectory() {
         return liveRunDirectory;
       },
@@ -937,8 +939,8 @@ test("public diarist accepts unreadable status before routing it back, and escal
     assert.equal(result.exitCode, 0, stdout.join("") || "diarist did not settle");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
-    const submissions = await readRecordedSubmissionRows(project, runId, home);
-    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+    const { rows: submissions } = await readRecordedSubmissionRows(project, runId, home);
+    assert.deepEqual(submissions.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
@@ -1738,8 +1740,8 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       assert.equal(result.exitCode, 0);
       assert.equal(existsSync(resolveTicketProvenanceVolume(TICKET, project, home).recordFile), false);
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
-      const submissions = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
-      assert.equal((submissions.at(-1)?.accepted as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
+      const { rows: submissions } = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
+      assert.equal((readReceipt(submissions.at(-1)!) as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
       const admitted = readCurrentSection(runDir, "admitted");
       assert.equal(admitted.ticketNumber, TICKET);
     });
@@ -1856,16 +1858,14 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     const attemptHistory = historyPayloads<{
       type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
     }>(ticketPlacement.runDirectory, "attempt-history");
-    assert.equal(attemptHistory.length, 2);
+    assert.equal(attemptHistory.length, 1);
     assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
     assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
     assert.equal(typeof attemptHistory[0]?.outcome?.diagnostic, "string");
     assert.ok((attemptHistory[0]?.outcome?.diagnostic as string).length > 0);
     assert.equal(attemptHistory[0]?.role, "diarist");
     assert.equal(attemptHistory[0]?.runId, runId);
-    assert.equal(attemptHistory[1]?.outcome?.kind, "accepted");
-    assert.equal(attemptHistory[1]?.role, "diarist");
-    assert.equal(attemptHistory[1]?.runId, runId);
+    assert.deepEqual(submittedParams(ticketPlacement.runDirectory), result.terminal!.submissions);
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
 });
@@ -1949,6 +1949,6 @@ test("an in-call resume persists an after-dispatch diarist relocation at the tic
     };
     assert.equal(error.kind, "error");
     assert.equal(error.runId, runId);
-    assert.equal(typeof error.diagnostic, "string");
+    assert.ok(typeof error.diagnostic === "string" && error.diagnostic !== "");
   });
 });

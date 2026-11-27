@@ -15,7 +15,6 @@ import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { objectPayloads} from "../helpers/terminal-payload.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
@@ -116,7 +115,8 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
     assert.equal(first.exitCode,0);
     assert.equal(first.terminal?.roleOutcome.kind,"accepted");
     // #416: load stays open (no terminal/resumable gate). #833: sealed bare resume
-    // is pass-through — host is reached; no re-seal so prior acceptance still settles.
+    // is pass-through — host is reached. Nothing new arrived, so the prior acceptance
+    // is history, not this answer (#1298).
     const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     let calls=0;
@@ -129,12 +129,8 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
       })});
     assert.equal(calls,1,"sealed bare resume must reach the host");
     assert.equal(resumed.exitCode,0);
-    assert.equal(
-      resumed.terminal?.roleOutcome.kind==="accepted"
-        ?(objectPayloads(resumed.terminal.roleOutcome)[0] ?? {}).note
-        :undefined,
-      "FIRST-ok",
-    );
+    assert.equal(resumed.terminal?.roleOutcome.kind,"no_receipt");
+    assert.deepEqual(resumed.terminal?.submissions,[{status:"converged",note:"FIRST-ok",ticketNumber:1171}]);
     assert.equal(resumed.terminal?.autoResumeCount,0);
   });
 });

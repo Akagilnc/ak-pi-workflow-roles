@@ -47,8 +47,8 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 | `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | `state.jsonl` 里最后一条 `invocation` |
 | `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针 | 最后一条 `admitted-request` |
 | `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 最后一条 `run-state` |
-| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实；`report` 的 `body` 不含各轮交卷原文，只带所属结算追加进 `history.jsonl` 的 `attempt-history` 行 identity（`attemptHistoryIdentity`）及所属庭 `courtAttemptId`（便于非记次重投影从 `state.jsonl` 历史终局取回指针，不读整腿最新终局、不按原文猜），读者凭 identity 取原文，不按席位取最后一条 | 最后一条 `terminal` |
-| `submission` | `latest`：最新一次封存的交卷原文 | 最后一条 `sealed` |
+| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实；`report` 不含交卷原文，结算按本庭提交账的引用取原稿（ADR 0088）；有庭号时带 `courtAttemptId`。无卷和失败各自的结算记录仍由 `attemptHistoryIdentity` 指认 | 最后一条 `terminal` |
+| `submission` | `latest`：最新一次封存的回执引用 | 最后一条 `sealed` |
 | `host` | `sessions[<host>]` 宿主会话 id（按宿主分格，换宿主续跑不会把一家的 id 交给另一家）与 `original`（宿主原件现在的路径：最近一次复制落在哪个文件名，就取本腿目录 `session/` 下该名；腿归位到票目录后仍指向归位后的原件） | `state.jsonl` 的 `host-session-id` 行；`log.jsonl` 的 `host-session`（`native-session-copy`）行 |
 
 父腿当前卷不再生成 `officers` 区（#1195）：审官结论读该审官自己的卷。历史 `officer-pointer` 行仍可在 `history.jsonl` 中留档并只读解码（太史等）；不迁移旧 books，未来渲染亦不复制该层。
@@ -57,17 +57,17 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `history.jsonl`——历史
 
-只追加，翻旧账时才读。行都是司天台 appender 写的行（`kind`、`payload` 与旧文件／旧账本一字不差，只是落地换了）：
+只追加。各行经司天台 appender 写入：
 
 - 原交卷账本：`candidate`、`roundContext`、`outcome`、`sealed`、`post-seal-anomaly`。
-- 原续跑记录：`attempt-history`（每个派发的回合一行）。
+- `attempt-history`：无卷或失败的结算事实；成功封存不再另写结算抄件。
 - `turn-delivery`：宿主每实际起跑一次，发出的系统提示与输出 schema 一行（催交回合各算一次；pi 取最后一个 `before_agent_start` 处理器留下的提示）。写失败只申报、不拦起跑。
 - `officer-pointer`：历史闸传召指针行（只读档案）。生产不再新写（#1195）；不投影进父腿 `current.json`。
 - `progress`：本腿每写下一行进度（封存时、报号归位补轮时）追加一行，带那一行的 `round` 与 `receipt` 引用（封存行另带 `toolCallId`）。结算读它给终局报票、席、轮与回执，不在回合结束后回读票级 `current.jsonl`（#1201）。
 
 ### `state.jsonl`——状态事实行
 
-只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（终局 payload 为 `{face, at, body}`；`report` 的 `body` 不含各轮交卷原文，只带 `attemptHistoryIdentity` 指向所属那次结算的 `attempt-history` 行，并带所属庭 `courtAttemptId`），加宿主会话绑定 `host-session-id`（续跑要用它，写失败与 main 上会话绑定文件写失败相同）。
+只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（终局 payload 为 `{face, at, body}`，各面内容见上表），加宿主会话绑定 `host-session-id`（续跑要用它，写失败与 main 上会话绑定文件写失败相同）。
 
 另含 worker 交卷闸跨续跑状态（#1178）：`commit-baseline`（提交基线）、`commit-reminder-bounce` / `prefix-reminder-bounce`（已提醒过一次）、`unfinished-reason-bounce`（缺理由催办，带 `invocationScopeId`）。续跑与票号归位后按各类最新一行（催办按当前调用计数）恢复；不另建 `session/worker-submission-gate/` 旁支。
 

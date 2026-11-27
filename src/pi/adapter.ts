@@ -133,6 +133,7 @@ export function createPiRoleHostAdapter(
       ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
         ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
         : {}),
+      ...(process.env.AK_ROLE_AUDITED_ROUND && { auditedRound: process.env.AK_ROLE_AUDITED_ROUND }),
       ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
         ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
         : {}),

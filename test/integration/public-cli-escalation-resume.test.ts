@@ -3,7 +3,7 @@
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
-import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -12,14 +12,16 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { runAkRole, type CliResult, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import type { CliIo } from "../../src/public-cli/cli-io.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { readRoleRunIdentity } from "../../src/public-cli/run-lifecycle.ts";
-import { listBookRunDirectories } from "../../src/role-run-placement.ts";
+import { listBookRunDirectories, sessionFileOf } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines, type TicketProgressLine } from "../../src/ticket-progress.ts";
-import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
+import { readSectionSync } from "../../src/run-dossier.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -57,8 +59,8 @@ type Observation = {
     readonly activation: RoleTurnRequest["activation"];
   }[];
   /** Resume the officer the first call presented, by its public address. */
-  resume(message?: string): Promise<CliResult>;
-  resumeSeat(seat: string, message?: string): Promise<CliResult>;
+  resume(message?: string, io?: CliIo): Promise<CliResult>;
+  resumeSeat(seat: string, message?: string, io?: CliIo): Promise<CliResult>;
   /** A caller's own `ak-role notary --source-run <judge leg>`. */
   summonNotary(): Promise<CliResult>;
   /** Ticket progress rows of one seat, in order: `[round, for]`. */
@@ -193,11 +195,11 @@ async function runJudge(
     const parent = identities.find((identity) => identity.role === "judge");
     assert.ok(parent);
     const ticketDirectory = join(home, ".ak-roles", "books", books[0]!, String(TICKET));
-    const run = (args: string[]) => runAkRole(args, {
+    const run = (args: string[], io: CliIo = captureIo().io) => runAkRole(args, {
       packageRoot,
       home,
       cwd: project,
-      io: captureIo().io,
+      io,
       principalAuthority: piDurablePrincipalAuthority,
       hostAdapters: [adapter("pi", routed)],
     });
@@ -217,11 +219,11 @@ async function runJudge(
       parentMessages,
       judgeSubmissions,
       officerSessions,
-      resumeSeat: (seat: string, message?: string) =>
-        run(["resume", String(TICKET), seat, ...(message === undefined ? [] : [message])]),
-      async resume(message?: string) {
+      resumeSeat: (seat: string, message?: string, io?: CliIo) =>
+        run(["resume", String(TICKET), seat, ...(message === undefined ? [] : [message])], io),
+      async resume(message?: string, io?: CliIo) {
         assert.equal(first.terminal?.ticket, TICKET);
-        return this.resumeSeat(first.terminal!.roleOutcome.role, message);
+        return this.resumeSeat(first.terminal!.roleOutcome.role, message, io);
       },
     });
   }, { prefix: "ak-1057-resume-" });
@@ -261,10 +263,12 @@ function assertEscalationPresented(
 test("#1057 a public judge verdict passes both audit gates and is accepted", async () => {
   let notaryCalls = 0;
   let auditorCalls = 0;
+  let notaryFails = false;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
     if (role === "notary") {
       notaryCalls += 1;
+      if (notaryFails) return { code: 1, stderr: "notary host failed", timedOut: false };
       return officer("notary", { status: "converged", mark: 2 })(args, options);
     }
     if (role === "auditor") {
@@ -287,18 +291,63 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     // A caller's own --source-run pins through the same admission.
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"], ["2", "judge#2"]]);
-    // The audited leg's row cannot be read at admission: the officer still runs
-    // and seals, its row names no round, and the cause stays on the officer run.
+    // The audited leg cannot be read at admission: the officer still runs and
+    // seals, and each cause stays on the officer run. Unreadable ledger: the leg's
+    // files locate its latest arrival, whose round its name finds in the progress
+    // file; an unreadable progress file gives none. Unlisted receipts: the ledger
+    // may miss a later arrival, so none is pinned and no round is recorded, though
+    // the progress file is readable.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
-    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 0);
-    await appendFile(join(observed.ticketDirectory, "current.jsonl"), "{malformed\n", "utf8");
+    const diagnostics = () => {
+      const notes = runLogPayloads<{ diagnostic?: unknown }>(notaryRun, "post-admission-diagnostic");
+      assert.ok(notes.every((note) => typeof note.diagnostic === "string" && note.diagnostic !== ""));
+      return notes.length;
+    };
+    assert.equal(diagnostics(), 0);
+    const history = join(observed.parentRunDirectory, "history.jsonl");
+    await chmod(history, 0o000);
+    try {
+      assert.equal((await observed.summonNotary()).exitCode, 0);
+      assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
+      assert.equal(diagnostics(), 1);
+      const progress = join(observed.ticketDirectory, "current.jsonl");
+      await appendFile(progress, "{malformed\n", "utf8");
+      assert.equal((await observed.summonNotary()).exitCode, 0);
+      assert.deepEqual(observed.rounds("notary").at(-1), ["4", undefined]);
+      assert.equal(diagnostics(), 3);
+      await writeFile(progress, (await readFile(progress, "utf8")).replace("{malformed\n", ""), "utf8");
+    } finally {
+      await chmod(history, 0o600);
+    }
+    // A malformed ledger line beside the draft it still locates: that draft and its
+    // round stand, and the bad line is reported.
+    await appendFile(history, "{malformed\n", "utf8");
     assert.equal((await observed.summonNotary()).exitCode, 0);
-    assert.deepEqual(observed.rounds("notary").at(-1), ["3", undefined]);
-    assert.equal(runLogPayloads(notaryRun, "post-admission-diagnostic").length, 1);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["5", "judge#2"]);
+    assert.equal(diagnostics(), 4);
+    await writeFile(history, (await readFile(history, "utf8")).replace("{malformed\n", ""), "utf8");
+    const receipts = join(observed.parentRunDirectory, "receipts");
+    await rename(receipts, `${receipts}.saved`);
+    await writeFile(receipts, "not a folder", "utf8");
+    assert.equal((await observed.summonNotary()).exitCode, 0);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["6", undefined]);
+    assert.equal(readSectionSync(notaryRun, "admitted")?.auditedReceipt, undefined);
+    assert.equal(diagnostics(), 5);
+    // Nothing was named for review, so that officer's failed resume asks after no
+    // audited original, even with the leg's drafts readable again.
+    await rm(receipts);
+    await rename(`${receipts}.saved`, receipts);
+    // A fault about the audited leg is noted on that leg: its log, or its session first.
+    const notes = () => runLogPayloads(observed.parentRunDirectory, "post-admission-diagnostic").length
+      + sessionFaultNotes(sessionFileOf(observed.parentRunDirectory)).length;
+    const before = notes();
+    notaryFails = true;
+    assert.equal((await observed.resumeSeat("notary", RULING)).exitCode, 1);
+    assert.equal(notes(), before);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 
-test("#1057 a notary escalation resumes into the remaining audit without Judge resubmission", async () => {
+test.each(["readable", "unreportable"])("#1057 a notary escalation resumes into the remaining audit without Judge resubmission (%s original)", async (original) => {
   const passed = { status: "converged", mark: 6 };
   let notaryCalls = 0;
   let auditorCalls = 0;
@@ -316,6 +365,18 @@ test("#1057 a notary escalation resumes into the remaining audit without Judge r
   }, () => ({ code: 0, stderr: "", verdict: VERDICT }), async (observed) => {
     assertEscalationPresented(observed, "notary", { status: "escalate", mark: 7 });
     assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
+    if (original === "unreportable") {
+      // The Judge's original is gone, and neither its run log nor stderr can take a
+      // word: the failure already formed stays this call's result (ADR 0080).
+      await rm(join(observed.parentRunDirectory, "receipts/1.json"));
+      await rm(join(observed.parentRunDirectory, "log.jsonl"), { force: true });
+      await mkdir(join(observed.parentRunDirectory, "log.jsonl"));
+      const failed = await observed.resume(RULING, { stdout: () => undefined, stderr: () => { throw new Error("stderr closed"); } });
+      assert.equal(failed.terminal?.roleOutcome.role, "judge");
+      assert.equal(failed.terminal.roleOutcome.kind, "failure");
+      assert.equal(failed.terminal.roleOutcome.decisiveFacts.errorCode, "ENOENT");
+      return;
+    }
     const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0);
     assert.equal(notaryCalls, 2);
@@ -331,9 +392,8 @@ test("#1057 a notary escalation resumes into the remaining audit without Judge r
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 1);
-    assert.deepEqual(rows.at(-1)?.accepted, VERDICT);
   });
 });
 
@@ -366,9 +426,8 @@ test("#1057 an auditor escalation resumes and settles the finished Judge submiss
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 1);
-    assert.deepEqual(rows.at(-1)?.accepted, VERDICT);
   });
 });
 
@@ -396,9 +455,8 @@ test("#1057 an auditor continue after escalation resumes the Judge for a revised
     assert.equal(auditorCalls, 3);
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), revised);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 2);
-    assert.deepEqual(rows.at(-1)?.accepted, revised);
     // #1200: the ruling resumed the auditor directly — still the round it was
     // summoned for; the re-summons after the revised verdict name the new round
     // and leave earlier rows as they were.
@@ -438,24 +496,39 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1214 R2b: an auditor resume that stays undecidable settles unsettled on the public call", async () => {
+test.each(["undecidable", "host failure", "unreadable audited leg"])("#1214 R2b: auditor resume keeps its %s result when the audited original is missing", async mode => {
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
     if (role === "notary") return officer("notary", { status: "converged", mark: 2 })(args, options);
     if (role === "auditor") {
       auditorCalls += 1;
+      if (auditorCalls > 1 && mode === "host failure") return { code: 1, stderr: "genuine officer host failure", timedOut: false };
       return officer("auditor", auditorCalls === 1
         ? { status: "escalate", mark: 4 }
         : { status: "undecidable", mark: 6 })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "" }), async (observed) => {
-    const continued = await observed.resume(RULING);
-    assert.equal(continued.exitCode, 0);
+    // ADR 0080: the officer's conclusion is in hand; reading the audited leg is a later step.
+    const parentState = join(observed.parentRunDirectory, "state.jsonl");
+    if (mode === "unreadable audited leg") await chmod(parentState, 0o000);
+    else await rm(join(observed.parentRunDirectory, "receipts/2.json"));
+    const continued = await observed.resume(RULING).finally(() => chmod(parentState, 0o600));
     assert.equal(continued.terminal?.roleOutcome.role, "auditor");
-    assert.equal(continued.terminal?.roleOutcome.decisiveFacts?.directionUnsettled, true);
-  });
+    assert.equal(continued.exitCode, mode === "host failure" ? 1 : 0);
+    if (mode !== "host failure") assert.equal(continued.terminal.roleOutcome.decisiveFacts?.directionUnsettled, true);
+    else assert.equal(continued.terminal.roleOutcome.kind, "failure");
+    assert.deepEqual(continued.terminal.receiptErrors ?? [], []);
+    if (mode === "unreadable audited leg") {
+      // The true cause is noted on the officer's own session beside its kept conclusion.
+      const officerSession = observed.officerSessions.filter((item) => item.role === "auditor").at(-1)!.sessionFile;
+      assert.deepEqual(sessionFaultNotes(officerSession).map((note) => typeof note.diagnostic === "string" && note.diagnostic !== ""), [true]);
+      return;
+    }
+    assert.deepEqual(runLogPayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),
+      [["judge", { name: "Error", code: "ENOENT" }]]);
+  }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });
 
 test("#1057/#1214 A5/F1: gate host failure presents parent original and officer scene; does not forge pass", async () => {
@@ -473,7 +546,7 @@ test("#1057/#1214 A5/F1: gate host failure presents parent original and officer 
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
     // Parent judge original volume remains accepted on the ledger (A5).
     assert.equal(observed.judgeSubmissions.length, 1);
-    const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const { rows } = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
     assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), true);
     // #1214 F1: officer scene remains visible on the structured terminal; public
     // stdout presentation is proven by mutation true-run in the fixer receipt,

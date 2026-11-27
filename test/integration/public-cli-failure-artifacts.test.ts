@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -19,11 +19,10 @@ import { test } from "vitest";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
+import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import {
   publishFailureTerminal,
   settleHostEndedNoReceipt,
-  trySettlePublicSeat,
 } from "../../src/public-cli/settlement.ts";
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
@@ -78,14 +77,9 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
     const artifactNote = runLogPayloads<{ diagnostic?: unknown }>(runDirectory, "post-admission-diagnostic")
-      .some((body) => typeof body.diagnostic === "string");
-    const sessionText = await readFile(sessionFileOf(runDirectory), "utf8");
-    const sessionNote = sessionText.split("\n").some((line) => {
-      if (!line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)) return false;
-      const entry = JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } };
-      return entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
-        && typeof entry.data?.diagnostic === "string";
-    });
+      .some((body) => typeof body.diagnostic === "string" && body.diagnostic !== "");
+    const sessionNote = sessionFaultNotes(sessionFileOf(runDirectory))
+      .some((note) => typeof note.diagnostic === "string" && note.diagnostic !== "");
     assert.equal(artifactNote || sessionNote, true);
   });
 });
@@ -162,14 +156,8 @@ test("terminal write failure is noted beside the host failure terminal and does 
       assert.equal(recorded[0]!.face, "error");
       assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
       // The refused write is a note beside the host terminal, in the run's session.
-      const noteText = (await readFile(sessionFileOf(runDirectory), "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-        .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-        ?.data?.diagnostic;
-      assert.equal(typeof noteText, "string");
+      const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
+      assert.ok(typeof noteText === "string" && noteText !== "");
     } finally {
       if (currentJson !== undefined) {
         try {
@@ -302,7 +290,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
       ),
       JSON.stringify(result.terminal?.submissions),
     );
-    // One sealed attempt: one accepted attempt-history row, and the accepted terminal stands.
+    // No duplicate settlement event; the accepted terminal stands.
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const sealedRunDirectory =
       (await findRunDirectoryById(home, "run-stderr-log-eisdir-accepted-001"))
@@ -310,19 +298,11 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
     const outcomes = readHistoryRows(sealedRunDirectory)
       .filter((row) => row.kind === "attempt-history")
       .map((row) => (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
-    assert.deepEqual(outcomes, ["accepted"]);
-    const sealedTerminal = readRunTerminal(sealedRunDirectory);
-    assert.equal(sealedTerminal.status, "present");
-    if (sealedTerminal.status === "present") assert.equal(sealedTerminal.face, "report");
+    assert.deepEqual(outcomes, []);
+    assert.equal(terminalBodyAt(join(sealedRunDirectory, "current.json"), "report").role, "judge");
     const liveSessionFile = sessionFileOf(sealedRunDirectory);
-    const noteText = (await readFile(liveSessionFile, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-      .find((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE)
-      ?.data?.diagnostic;
-    assert.equal(typeof noteText, "string");
+    const noteText = sessionFaultNotes(liveSessionFile)[0]?.diagnostic;
+    assert.ok(typeof noteText === "string" && noteText !== "");
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity", async () => {
@@ -656,16 +636,9 @@ test("#953 a later success replaces an earlier failure terminal, and a later fai
     // later non-recording re-projection (#1161 N1: do not invent history on re-project).
     const settled = await trySettlePublicSeat(admitted, authority, { recordAttemptHistory: true });
     assert.equal(settled?.roleOutcome.kind, "accepted");
-    const afterSuccess = readRunTerminal(runDirectory);
-    assert.equal(afterSuccess.status, "present");
-    if (afterSuccess.status === "present") {
-      assert.equal(afterSuccess.face, "report");
-      assert.equal(
-        (afterSuccess.body.outcome as { kind?: string } | undefined)?.kind,
-        "accepted",
-      );
-      assert.equal(afterSuccess.body.diagnostic, undefined, "the old failure's body is gone, not merged");
-    }
+    const afterSuccess = terminalBodyAt(join(runDirectory, "current.json"), "report");
+    assert.equal((afterSuccess.outcome as { kind?: string }).kind, "accepted");
+    assert.equal(afterSuccess.diagnostic, undefined, "the old failure's body is gone, not merged");
 
     await publishFailureTerminal(admitted, { diagnostic: "new boom", cause: "provider" }, {
       sessionDirectory,

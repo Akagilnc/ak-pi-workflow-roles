@@ -513,7 +513,7 @@ function navigatorOutputTool(role: string): string | undefined {
   return packagedRoleOutputTool(role);
 }
 
-export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }): NavigatorSettlement | undefined {
+export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }, fields?: { readonly status?: string }): NavigatorSettlement | undefined {
   // One shared classifier owns terminal discriminant (lifecycle + settlement + extractors).
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
   const classification = classifyPackagedRoleTerminalResult(event);
@@ -522,7 +522,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
     return { kind: "role_infrastructure_failure", role, phase };
   }
   // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
-  const received = receiptStatus(event.details);
+  const received = fields === undefined ? receiptStatus(event.details) : fields.status;
   const status = typeof received === "string" ? received : undefined;
   if (status === "escalate") {
     return { kind: "human_decision", role, phase, status };
@@ -537,16 +537,16 @@ export async function projectClosedSubmissionLifecycle(
   recordAccepted: () => void,
   settle: (settlement: NavigatorSettlement | undefined) => Promise<NavigatorEvent | undefined>,
   failRecord: (error: unknown) => never,
+  fields?: { readonly status?: string },
 ): Promise<void> {
   recordAccepted();
   const closure = {
     toolName: navigatorOutputTool(closed.role)!,
     isError: false,
-    details: closed.accepted,
   };
   let navigator: NavigatorEvent | undefined;
   try {
-    navigator = await settle(publicNavigatorSettlement(closed.role, phase, closure));
+    navigator = await settle(publicNavigatorSettlement(closed.role, phase, { ...closure, details: closed.accepted }, fields));
   } finally {
     // A Navigator failure cannot erase an already accepted role closure.
     // Missing attendance remains a typed unavailable at public settlement.
@@ -687,7 +687,7 @@ function isAuditedIdentitySeat(role: string): boolean {
 /** Resolve audited-run directory for identity material — this-leg flags / admitted page first. */
 function resolveAuditedSourceRunDirectory(
   roleHost: RoleHost,
-  ctx: HostContext,
+  admitted: unknown,
   role: string,
 ): string | undefined {
   const notary = roleHost.getFlag(NOTARY_SOURCE_RUN_FLAG.name);
@@ -695,12 +695,8 @@ function resolveAuditedSourceRunDirectory(
   const inspector = roleHost.getFlag(INSPECTOR_SOURCE_RUN_FLAG.name);
   if (typeof inspector === "string" && inspector.trim() !== "") return inspector.trim();
   // This-leg admitted binding wins over shared auditor env (#1166 J3).
-  const runDirectory = runDirectoryFromHostContext(ctx);
-  if (runDirectory !== undefined) {
-    const admitted = readPageSync(runDirectory, "admitted");
-    const sourceRunPath = admittedSourceRunPath(admitted);
-    if (sourceRunPath !== undefined) return sourceRunPath.trim();
-  }
+  const sourceRunPath = admittedSourceRunPath(admitted);
+  if (sourceRunPath !== undefined) return sourceRunPath.trim();
   // Auditor env is request-scoped soul binding for the auditor seat only.
   if (role === "auditor") {
     const auditor =
@@ -791,7 +787,7 @@ export function createDiaristRoleRuntime(
       role: "diarist",
       tool: DIARIST_TOOL_SPEC,
       soulTag: "diarist",
-      beforeAccept: async ({ toolCallId, parameters, ctx }) => {
+      beforeAccept: async ({ toolCallId, parameters, status, ctx }) => {
         const submitted =
           isRecord(parameters)
             ? (parameters as Record<string, unknown>)
@@ -799,7 +795,7 @@ export function createDiaristRoleRuntime(
         // Routing belongs to the public seam after this tool call has returned.
         // Only completed receipts need local diary projection; other statuses
         // pass through verbatim for that seam to route.
-        if (receiptStatus(parameters) !== "completed") return parameters;
+        if (status !== "completed") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
         const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
@@ -920,7 +916,7 @@ export function createRoleRuntimeExtension(
     ? deliveryLimitFromEnv(process.env)
     : deliveryLimitFromConfig(deliveryRequestLimit);
   return (envelopeHost) => {
-    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext, toolCallId: string) => Promise<void> = async () => {
+    let projectClosedSubmission: NonNullable<Parameters<typeof createSubmissionLedgerHost>[3]> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
@@ -935,7 +931,7 @@ export function createRoleRuntimeExtension(
         },
       },
       (error, ctx, toolCallId) => hostActions.failInfrastructure(error, ctx, toolCallId),
-      async (closed, context, toolCallId) => projectClosedSubmission(closed, context, toolCallId),
+      (...args) => projectClosedSubmission(...args),
     );
     roleHost.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
     // Reviewer transport flags: shared envelope owns registration (ADR 0018).
@@ -1067,7 +1063,7 @@ export function createRoleRuntimeExtension(
       await pending;
       return pendingNavigatorPresentation?.event;
     };
-    projectClosedSubmission = async (closed, context, toolCallId) => {
+    projectClosedSubmission = async (closed, context, toolCallId, fields) => {
       // #1183: typed ticket identity is acquired on the ledger seam when params
       // are first read — not here after seal. Closure only projects lifecycle.
       await projectClosedSubmissionLifecycle(
@@ -1077,6 +1073,7 @@ export function createRoleRuntimeExtension(
         () => receiptDelivery.recordAccepted(),
         settleNavigatorProjection,
         (error) => hostActions.failInfrastructure(error, context, toolCallId),
+        fields,
       );
     };
     roleHost.on("input", (event, ctx) => {
@@ -1147,11 +1144,14 @@ export function createRoleRuntimeExtension(
       return { readingMaterial: reading };
     });
     // #1166 / ADR 0087: four audit seats share one audited-run identity material.
-    // Notary also emits identity from its own before_agent_start; skip double fold.
+    // Which receipt is under review rides the first sentence only (resumed hosts keep
+    // their recorded system prompt), never this material.
     roleHost.on("before_agent_start", (_event, ctx) => {
       const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      if (typeof role !== "string" || !isAuditedIdentitySeat(role) || role === "notary") return;
-      const sourceDirectory = resolveAuditedSourceRunDirectory(roleHost, ctx, role);
+      if (typeof role !== "string" || !isAuditedIdentitySeat(role)) return;
+      const runDirectory = runDirectoryFromHostContext(ctx);
+      const admitted = runDirectory === undefined ? undefined : readPageSync(runDirectory, "admitted");
+      const sourceDirectory = resolveAuditedSourceRunDirectory(roleHost, admitted, role);
       if (sourceDirectory === undefined) return;
       const identity = auditedRunIdentityFromDirectory(sourceDirectory);
       if (identity === undefined) return;

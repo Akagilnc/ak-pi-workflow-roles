@@ -24,8 +24,3 @@ export function auditedRunIdentityFromDirectory(runDirectory: string): string | 
 export function auditedRunIdentityMaterial(identity: string): AuditedRunIdentityMaterial {
   return { kind: AUDITED_RUN_IDENTITY_KIND, auditedRun: identity };
 }
-
-/** Identity from locator fields already in hand (notary source-run). */
-export function auditedRunIdentityFromParts(runId: string, role: string): string {
-  return formatRunLeaf(runId, role);
-}

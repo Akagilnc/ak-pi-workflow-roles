@@ -4,10 +4,9 @@ import { auditorRunDirectory } from "./role-run-placement.ts";
 import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import { officerConclusionReask } from "./gatekeeper-role.ts";
+import { canReaskOfficer, officerConclusionReask } from "./gatekeeper-role.ts";
 import { receiptStatus } from "./packaged-role-registry.ts";
-import { currentReplyRows } from "./public-cli/terminal.ts";
-import { readableGateItem } from "./readable-gate-item.ts";
+import { currentReplyRows, returnedReceiptStatus } from "./public-cli/terminal.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { isRecord } from "./unknown-value.ts";
 
@@ -22,6 +21,7 @@ export type ComplianceNoReceipt = Partial<NoReceiptLifecycleFacts> & { status: "
 export type ComplianceReceived = {
   readonly status: "received";
   readonly reply: unknown;
+  readonly receivedStatus: unknown;
   readonly usage?: Usage;
 };
 /** Host/engine/record failure — not a role three-state, not `received` (#836 A.3). */
@@ -62,13 +62,9 @@ export type AuditorParentAttemptBinding = {
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 
-/** Try to project a known three-state compliance decision; undefined when not converged/continue/escalate. */
-export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision | undefined {
-  if (!isRecord(arguments_)) {
-    return undefined;
-  }
-  const args = arguments_ as Record<string, unknown>;
-  const status = receiptStatus(arguments_);
+/** Project this auditor reply without replacing unknown words or the manuscript. */
+function readComplianceCandidate(arguments_: unknown, status: unknown, usage?: Usage): ComplianceDecision {
+  const args = isRecord(arguments_) ? arguments_ : {};
   if (status === "converged") return { status, receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "continue") return { status, violations: readListField(args.violations), receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
@@ -80,18 +76,9 @@ export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): 
       ...(usage === undefined ? {} : { usage }),
     };
   }
-  return undefined;
-}
-
-/**
- * Read a compliance candidate. Known three-state projects; anything else is
- * `received` with the raw reply — no unreadable/unusable judgment (#757).
- */
-export function readComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision {
-  const projected = tryReadComplianceCandidate(arguments_, usage);
-  if (projected !== undefined) return projected;
   return {
     status: "received",
+    receivedStatus: status,
     reply: arguments_,
     ...(usage === undefined ? {} : { usage }),
   };
@@ -109,15 +96,12 @@ export type AuditorSummon = (
   signal?: AbortSignal,
   /** Plain-language re-ask when the prior reply was not a three-state conclusion. */
   reask?: string,
-  /** Parent's verbatim current submission, serialized when structured. */
-  submission?: string,
 ) => Promise<PublicSummonResult>;
 
 export type RunComplianceAuditOptions = {
   /** Who is being audited — selects judge-auditor.md / doctor-auditor.md. */
   readonly subject: AuditorSoulRole;
   context: HostContext;
-  submission?: unknown;
   runDirectory?: string | undefined;
   signal?: AbortSignal;
   /** This loop's ceiling. Absent uses the package default. */
@@ -175,16 +159,14 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
   }
   if (outcome.kind === "accepted") {
     const rows = currentReplyRows(summoned.terminal);
-    if (rows.length === 0) {
-      return readComplianceCandidate({}, usage);
-    }
-    // The terminal retains history; the decision carries only the current reply.
-    return readComplianceCandidate(rows[rows.length - 1], usage);
+    const receipt = rows.length ? rows.at(-1) : {};
+    return readComplianceCandidate(receipt, returnedReceiptStatus(summoned, () => receipt), usage);
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {
     status: "received",
     reply: outcome,
+    receivedStatus: receiptStatus(outcome),
     ...(usage === undefined ? {} : { usage }),
   };
 }
@@ -195,7 +177,6 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     throw new Error("Compliance audit requires a parent run directory pointer");
   }
   const subject = options.subject;
-  const submission = options.submission === undefined ? undefined : readableGateItem(options.submission);
   const summon =
     options.summonAuditor
     ?? (async (
@@ -222,19 +203,17 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         home,
         ...(auditSignal === undefined ? {} : { signal: auditSignal }),
         ...(reask === undefined ? {} : { reviewReask: reask }),
-        ...(submission === undefined ? {} : { gateReviewInstruction: submission }),
       });
     });
   let reask: string | undefined;
   let reasksSpent = 0;
   const reaskLimit = deliveryLimitFromConfig(options.autoResumeLimit);
   for (;;) {
-    const summoned = await summon(subject, runDirectory, options.signal, reask, submission);
+    const summoned = await summon(subject, runDirectory, options.signal, reask);
     const decision = await projectAuditorTerminal(summoned);
-    if (decision.status === "received") {
-      if (reasksSpent >= reaskLimit) return decision;
+    if (decision.status === "received" && canReaskOfficer(summoned, reasksSpent, reaskLimit)) {
       reasksSpent += 1;
-      reask = officerConclusionReask(receiptStatus(decision.reply));
+      reask = officerConclusionReask(decision.receivedStatus);
       continue;
     }
     return decision;

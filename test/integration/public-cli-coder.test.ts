@@ -19,6 +19,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -29,21 +30,21 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 
 
-test("public coder accepts an unreadable status before routing it back for re-submission", async () => {
+test.each([undefined, 1, 2])("public coder settles the new court after status reask (unreadable receipt %s)", async (missing) => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
     // #1198: missing summary stays accepted; overlong summary kept as submitted.
-    const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
+    const unreadable = missing === undefined ? null : { status: { value: "unknown" }, report: { unvalidated: true } };
     const corrected = {
       status: "planned",
       report: { unvalidated: true },
@@ -60,12 +61,18 @@ test("public coder accepts an unreadable status before routing it back for re-su
     });
     let runDirectory = "";
     const roleTurnHost = {
-      executeTurn(request: Parameters<typeof structuredHost.executeTurn>[0]) {
+      async executeTurn(request: Parameters<typeof structuredHost.executeTurn>[0]) {
+        const second = runDirectory !== "";
         runDirectory = request.runDirectory;
-        return structuredHost.executeTurn(request);
+        const turn = await structuredHost.executeTurn(request);
+        if (second && missing === 1) await unlink(join(runDirectory, "receipts/1.json"));
+        if (second && missing === 2) await writeFile(join(runDirectory, "receipts/2.json"),
+          Buffer.concat([Buffer.from('{"status":"planned","report":"'), Buffer.from([0xff]), Buffer.from('"}') ]));
+        return turn;
       },
     };
 
+    const { io } = captureIo();
     const result = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
       {
@@ -74,11 +81,20 @@ test("public coder accepts an unreadable status before routing it back for re-su
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-cli-coder-status-reask",
-        io: captureIo().io,
+        io,
         roleTurnHost,
       },
     );
 
+    if (missing !== undefined) {
+      assert.equal(result.exitCode, missing === 2 ? 1 : 0);
+      assert.equal(result.terminal?.roleOutcome.kind, missing === 2 ? "failure" : "accepted");
+      assert.deepEqual(result.terminal?.submissions, missing === 2 ? [unreadable] : [corrected]);
+      assert.deepEqual(result.terminal?.receiptErrors?.map(({ receipt, identity }) => [receipt, identity?.code ?? identity?.name]),
+        [[join(runDirectory, `receipts/${missing}.json`), missing === 2 ? "Error" : "ENOENT"]]);
+
+      return;
+    }
     assert.equal(result.exitCode, 0);
     // Public entry hands the host a schema that declares optional summary (#1198).
     assert.ok(handedSchema !== null && typeof handedSchema === "object");
@@ -96,12 +112,12 @@ test("public coder accepts an unreadable status before routing it back for re-su
     // A codex-style host leg through the public entry, two rounds: only the dossier at rest (#1161).
     assertRunDirectoryHoldsOnlyDossier(runDirectory);
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
-    const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
-    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+    const { rows: submissions } = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
+    assert.deepEqual(submissions.map(row => ({ kind: row.kind, accepted: readReceipt(row) })), [
       { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
-    assert.equal(Object.hasOwn(unreadable, "summary"), false);
+    assert.deepEqual(result.terminal!.submissions, [unreadable, corrected]);
   });
 });
 
@@ -256,9 +272,8 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
             role: "coder",
             details: receipt,
             toolCallId: "alt-1",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),
@@ -297,7 +312,7 @@ test("Coder submission remains recorded when the later Inspector transport fails
         packageRoot, home, cwd: project, createRunId: () => runId, io,
         roleTurnHost: createMinimalHost(async (request) => {
           if (request.activation.role === "inspector") {
-            const rows = await readRecordedSubmissionRows(project, runId, home);
+            const { rows } = await readRecordedSubmissionRows(project, runId, home);
             assert.equal(rows.at(-1)?.kind, "accepted", "the Coder tool has finished before Inspector dispatch");
             return { code: 1, stderr: "provider unavailable", timedOut: false };
           }
@@ -307,14 +322,15 @@ test("Coder submission remains recorded when the later Inspector transport fails
           await sealAcceptedSubmission({
             cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
             role: "coder", details: receipt, toolCallId: "coder-finished",
-            ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
           return { code: 0, stderr: "", timedOut: false };
         }),
       },
     );
     assert.equal(result.exitCode, 1);
-    assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.kind, "accepted");
+    assert.equal((await readRecordedSubmissionRows(project, runId, home)).rows.at(-1)?.kind, "accepted");
   });
 });
 
@@ -600,8 +616,10 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
         : [],
-      ["partially_completed", "planned"],
+      ["planned"],
     );
+    assert.deepEqual(resumed.terminal?.submissions, submittedParams(runDirectory));
+    assert.equal(resumed.terminal?.submissions?.length, 2);
   });
 });
 

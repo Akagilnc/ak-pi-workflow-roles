@@ -86,7 +86,7 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
   assert.equal(result.code, null);
   const notes = packageNotes(runDirectory);
   assert.equal(notes.length, 1);
-  assert.equal(typeof notes[0]?.diagnostic, "string");
+  assert.ok(typeof notes[0]?.diagnostic === "string" && notes[0].diagnostic !== "");
   assert.equal(methods.includes("session/new"), false);
   assert.equal(methods.includes("session/load"), false);
   assert.equal(methods.includes("session/prompt"), false);
@@ -182,6 +182,6 @@ test("#1091 headless resume without bound session id reports missing; never bind
   assert.equal(result.knownFailure?.details?.cleanupError, undefined);
   const notes = packageNotes(runDirectory);
   assert.equal(notes.length, 1);
-  assert.equal(typeof notes[0]?.diagnostic, "string");
+  assert.ok(typeof notes[0]?.diagnostic === "string" && notes[0].diagnostic !== "");
   assert.equal(bindCalls, 0);
 });

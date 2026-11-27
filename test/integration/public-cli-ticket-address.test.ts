@@ -7,12 +7,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { chmod, mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type CliResult } from "../../src/public-cli/cli.ts";
@@ -20,6 +21,7 @@ import { runDirectoryOfSessionFile } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { withHermeticHome, withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
 import { seedPublicSeat } from "../helpers/passing-review-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -60,7 +62,7 @@ async function withTicketProject(
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    for (const seat of ["judge", "notary", "fixer", "diarist"]) await seedPublicSeat(home, seat);
+    for (const seat of ["judge", "notary", "fixer", "diarist", "inspector"]) await seedPublicSeat(home, seat);
     const turns: Turn[] = [];
     const captured = captureIo();
     const ticketDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET));
@@ -94,8 +96,9 @@ async function withTicketProject(
             if (details === undefined) return { code: 0, stderr: "", timedOut: false, args: [...args] };
             seals += 1;
             return scriptedTerminatingToolSession({
-              role: turn.role as "judge" | "notary",
-              toolName: turn.role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : JUDGE_OUTPUT_TOOL_NAME,
+              role: turn.role as "judge" | "notary" | "inspector",
+              toolName: turn.role === "notary" ? NOTARY_OUTPUT_TOOL_NAME
+                : turn.role === "inspector" ? INSPECTOR_OUTPUT_TOOL_NAME : JUDGE_OUTPUT_TOOL_NAME,
               details,
               toolCallId: `call-${seals}`,
               sessionWriteMode: existsSync(turn.sessionFile) ? "append" : "replace",
@@ -125,7 +128,9 @@ async function legCount(home: string): Promise<number> {
 
 test("#1201 resume <ticket> <seat> continues the seat's session; the terminal names ticket, round and receipt", async () => {
   await withTicketProject(async ({ ticketDirectory, turns, call }) => {
-    const first = await call(["judge", "--model", SEAT_MODEL, "review"], () => ruling({ note: "one" }));
+    const one = ruling({ note: "one" });
+    const two = ruling({ note: "two" });
+    const first = await call(["judge", "--model", SEAT_MODEL, "review"], () => one);
     assert.equal(first.exitCode, 0);
     const firstRow = seatRows(ticketDirectory, "judge").at(-1)!;
     assert.equal(firstRow.round, "1");
@@ -141,15 +146,15 @@ test("#1201 resume <ticket> <seat> continues the seat's session; the terminal na
     }
 
     // Bare number: the same leg; its next accepted receipt is the next round.
-    const second = await call(["resume", String(TICKET), "judge"], () => ruling({ note: "two" }));
+    const second = await call(["resume", String(TICKET), "judge"], () => two);
     assert.equal(second.exitCode, 0);
     assert.equal(turns.at(-1)?.leg, turns[0]?.leg);
-    assert.deepEqual(seatRows(ticketDirectory, "judge").map((row) => row.round), ["1", "2"]);
-    // Each submission the terminal presents reports its own round and receipt.
-    assert.deepEqual(
-      second.terminal?.receipts?.map((filed) => [filed.round, relative(ticketDirectory, filed.receipt)]),
-      seatRows(ticketDirectory, "judge").map((row) => [row.round, row.receipt]),
-    );
+    const rows = seatRows(ticketDirectory, "judge");
+    assert.deepEqual(rows.map((row) => row.round), ["1", "2"]);
+    assert.equal(second.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(second.terminal.roleOutcome.payloads, [two]);
+    assert.deepEqual(second.terminal.receipts, [{ round: "2", receipt: join(ticketDirectory, rows[1]!.receipt) }]);
+    assert.deepEqual(second.terminal.submissions, [one, two]);
 
     // A quoted `#N` is the same ticket.
     const before = turns.length;
@@ -289,6 +294,33 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     await call(["resume", String(TICKET), "judge#2"]);
     assert.equal(turns.at(-1)?.role, "judge");
     assert.equal(join(ticketDirectory, "runs", turns.at(-1)!.leg), legB);
+
+    // Leg A files a later receipt. A round in the locator only finds the leg; a direct
+    // call reviews that leg's latest arrival — the pin and the officer's progress row,
+    // with or without a caller's dispatch (ADR 0085).
+    await call(["resume", String(TICKET), "judge#1"], () => ruling({ later: true }));
+    const forOf = (seat: string) => readTicketProgressLines(ticketDirectory).filter((row) => row.seat === seat).at(-1)?.for;
+    const pinned = () => readCurrentSection(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted").auditedReceipt;
+    await boundTo(`${TICKET}:judge#1`);
+    assert.equal(pinned(), "2.json");
+    assert.equal(forOf("notary"), "judge#3");
+    const dispatch = "审 judge 最新那份。";
+    const inspected = await call(["new", "inspector", "--model", SEAT_MODEL, "--source-run", `${TICKET}:judge#1`, dispatch],
+      () => ({ status: "converged" }));
+    assert.equal(inspected.exitCode, 0);
+    assert.equal(forOf("inspector"), "judge#3");
+
+    // A path locator, unreadable ledger: the leg's files still locate its latest arrival,
+    // an original never accepted, so it is the one under review and borrows no round.
+    await writeFile(join(legA, "receipts", "3.json"), JSON.stringify(ruling({ arrivedOnly: true })));
+    await chmod(join(legA, "history.jsonl"), 0o000);
+    try {
+      await call(["new", "notary", "--model", SEAT_MODEL, "--source-run", legA], () => ({ status: "converged" }));
+    } finally {
+      await chmod(join(legA, "history.jsonl"), 0o644);
+    }
+    assert.equal(pinned(), "3.json");
+    assert.equal(forOf("notary"), undefined);
 
     const turnsBefore = turns.length;
     const legsBefore = await legCount(home);

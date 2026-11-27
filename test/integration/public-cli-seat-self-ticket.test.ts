@@ -42,6 +42,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { resolveLiveRunDirectoryPath } from "../../src/external-host-turn-loop.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
@@ -117,13 +118,12 @@ function baseEnv(input: {
             cwd: request.cwd,
             home: request.home,
             runId: input.runId,
-            runDirectory: request.runDirectory,
+            runDirectory: (await resolveLiveRunDirectoryPath(request.runDirectory, request.home)) ?? request.runDirectory,
             role: input.role,
             details,
             toolCallId: `call_${input.role}_${index + 2}`,
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
+            ...(request.courtAttemptId && { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId && { invocationScopeId: request.invocationScopeId }),
           });
         }
       }

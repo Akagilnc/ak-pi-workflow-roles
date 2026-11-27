@@ -416,10 +416,8 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    // Caller words ride the host turn; they do not open a court, so the result
-    // face is the run's own recorded sequence (#1032 修订票：裸 resume 只透传).
+    // Bare resume reaches the host; its new seal is the result, not the leg history.
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads, [
-      { status: "converged", note: "FIRST-署" },
       { status: "continue", fix: { summary: "RESUMED-再审" } },
     ]);
     assert.deepEqual(resumed.terminal?.submissions, [
@@ -679,7 +677,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
             {
               type: "custom",
               customType: "ak-role-submission-closure",
-              data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false, details: accepted },
+              data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false },
               id: "closure-accept",
               parentId: "result-accept",
               timestamp: sessionRowTime(44).iso,
@@ -717,22 +715,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    // No court scope: the run's recorded sequence is the result face, and the
-    // run-scoped submissions carrier reads the same rows (#836).
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
-      "converged",
-      "continue",
-      "converged",
-    ]);
-    const payloads = objectPayloads(result.terminal.roleOutcome);
-    assert.equal(payloads.length, 3);
-    assert.equal(payloads[1]!.status, "continue");
-    assert.equal(
-      (payloads[1]!.fix as { summary?: string } | undefined)?.summary,
-      "REJECTED-FIRST-findings-visible",
-    );
-    assert.equal(payloads[2]!.status, "converged");
-    assert.equal(payloads[2]!.note, "ACCEPTED-AFTER-CORRECTION");
+    assert.deepEqual(result.terminal.roleOutcome.payloads, [accepted]);
     // submissions stay run-scoped (#836): prior seed + this turn's bounce/accept.
     assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
 
@@ -820,7 +803,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           caseRun.cap.stderr.join("") ||
           `${caseSpec.label} keeps the lawful ledger`,
       );
-      assert.equal(caseResumed.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(caseResumed.terminal?.roleOutcome.kind, "no_receipt");
       const submissions = caseResumed.terminal?.submissions ?? [];
       assert.ok(
         submissions.some((row) =>
@@ -833,7 +816,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     }
 
     // 3) Reverse same-turn order (accepted first, bounce later): terminal may
-    // stay accepted, but rejection facts must remain on payloads and gate.
+    // stay accepted, but the rejected manuscript remains in leg history.
     const reverseAccepted = {
       status: "converged" as const,
       note: "ACCEPTED-FIRST-REVERSE",
@@ -861,7 +844,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           {
             type: "custom",
             customType: "ak-role-submission-closure",
-            data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false, details: reverseAccepted },
+            data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false },
             id: "closure-rev-accept",
             parentId: "result-rev-accept",
             timestamp: sessionRowTime(122).iso,
@@ -902,16 +885,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         "reverse order keeps accepted exit 0",
     );
     assert.equal(reversed.terminal?.roleOutcome.kind, "accepted");
-    assert.deepEqual(payloadStatusSequence(reversed.terminal!.roleOutcome), [
-      "converged",
-      "continue",
-    ]);
-    const reversePayloads = objectPayloads(reversed.terminal!.roleOutcome);
-    assert.equal(reversePayloads[0]!.note, "ACCEPTED-FIRST-REVERSE");
-    assert.equal(
-      (reversePayloads[1]!.fix as { summary?: string } | undefined)?.summary,
-      "BOUNCED-AFTER-ACCEPT-VISIBLE",
-    );
+    assert.deepEqual(reversed.terminal!.roleOutcome.payloads, [reverseAccepted]);
+    assert.deepEqual(reversed.terminal!.submissions, [reverseAccepted, reverseBounced]);
   });
 });
 
