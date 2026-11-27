@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { test } from "vitest";
 
@@ -152,6 +152,54 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
       true,
     );
     assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
+  });
+});
+
+test("a leg filed under its ticket between throwing attempts hands back error files at its final place", async()=>{
+  await withTempHome(async(home)=>{
+    const project=join(home,"proj");
+    const runId="throw-then-filed";
+    const book=join(home,".ak-roles","books","proj");
+    const unboundDir=join(book,"unbound","runs",`${runId}@judge`);
+    const ticketDir=join(book,"1299","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
+    await mkdir(join(unboundDir,"session"),{recursive:true});
+    await mkdir(dirname(ticketDir),{recursive:true});
+    await writeFile(join(unboundDir,"session","session.jsonl"),"{}\n","utf8");
+    const admitted={principal:fixturePrincipal(join(unboundDir,"session")),runDirectory:unboundDir,role:"judge" as const,runId,projectRoot:project};
+    let calls=0;
+    const result=await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted,
+      io:captureIo().io,
+      autoResumeLimit:1,
+      buildInitialPayload: ()=>"initial",
+      buildResumePayload: ()=>"resume",
+      dispatch: async(_payload,lease):Promise<LoopDispatchResult>=>{
+        calls+=1;
+        await lease?.release();
+        // The second attempt reports its ticket: the leg moves and placement follows it.
+        if(calls===2){
+          await rename(unboundDir,ticketDir);
+          admitted.runDirectory=ticketDir;
+          admitted.principal=fixturePrincipal(join(ticketDir,"session"));
+        }
+        throw new Error(`boom-${calls}`);
+      },
+    });
+    const terminal=result.terminal as TerminalResult;
+    if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
+    const facts=terminal.roleOutcome.decisiveFacts as {dispatchErrorFiles:string[];lastDispatchErrorFile:string;failedAttempts:{errorFile?:string}[]};
+    const handedBack=[
+      ...terminal.artifacts.map((artifact)=>artifact.path),
+      ...facts.dispatchErrorFiles,
+      facts.lastDispatchErrorFile,
+      ...facts.failedAttempts.map((attempt)=>attempt.errorFile!),
+    ];
+    assert.equal(handedBack.length,7);
+    for(const path of handedBack) assert.equal(path,join(ticketDir,"log.jsonl"));
+    await stat(join(ticketDir,"log.jsonl"));
   });
 });
 
