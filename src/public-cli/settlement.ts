@@ -67,7 +67,7 @@ import type {
   DurablePrincipalCoordinates,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { readStateRowsSync, runCurrentPath } from "../run-dossier.ts";
+import { readStateRowsSync } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
 /**
@@ -1380,7 +1380,8 @@ export async function publishSeatSettlement<T extends TerminalResult>(admitted: 
   const published = await besideConclusion((diagnostic) => noteSettlementFault(admitted.runDirectory, scope, diagnostic), "terminal publication", async () => {
     if (report !== undefined) {
       writeRunTerminal(admitted.runDirectory, "report", report);
-      return { ...terminal, artifacts: [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }] };
+      // The report the caller opens is the receipt this settle accepted (#1299).
+      return { ...terminal, artifacts: (terminal.receipts ?? []).map(({ receipt }) => ({ kind: "report" as const, path: receipt })) };
     }
     const identity = scope?.recordAttemptHistory
       ? (await appendRunAttemptHistory(attemptHistorySource(admitted, coordinatesFromAdmitted(authority, admitted)), terminal.roleOutcome)).identity
@@ -1509,7 +1510,8 @@ export async function publishFailureTerminal(
       scope,
     );
   }
-  writeRunTerminal(admitted.runDirectory, "error", {
+  // The error pointer names the file the terminal row landed in (#1299).
+  const path = writeRunTerminal(admitted.runDirectory, "error", {
     kind: "error",
     role: admitted.role,
     runId: admitted.runId,
@@ -1522,7 +1524,6 @@ export async function publishFailureTerminal(
     ...(failure.stderr === undefined ? {} : { stderr: failure.stderr }),
     ...terminalBelongingFields(attemptHistoryIdentity, scope),
   });
-  const path = runCurrentPath(admitted.runDirectory);
   onErrorPublished?.(path);
   if (historyFailed) throw historyFailure;
   return [{ kind: "error", path }];

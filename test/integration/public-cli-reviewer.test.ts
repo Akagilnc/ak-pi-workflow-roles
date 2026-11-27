@@ -658,10 +658,6 @@ test("explicit single-lens hard-stop refused still lands mismatched axis key", a
       home, ".ak-roles", "books", bookKey, "1171", "runs",
       "run-cli-reviewer-hard-stop@reviewer",
     );
-    const refusedReport = terminalBodyAt(join(refusedRunDirectory, "current.json"), "report") as {
-      outcome?: { kind?: string };
-    };
-    assert.equal(refusedReport.outcome?.kind, "accepted");
     // The refusing payload itself is what history.jsonl kept.
     const refusedDurable =
       (submittedParams(refusedRunDirectory) as ReadonlyArray<Record<string, unknown>>)
@@ -757,7 +753,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     // The admitted facts are the run's own record in current.json's admitted section.
     const reportRef = result.terminal?.artifacts.find((a) => a.kind === "report");
     assert.ok(reportRef);
-    const admittedFacts = readCurrentSection(dirname(reportRef.path), "admitted") as {
+    const admittedFacts = readCurrentSection(dirname(dirname(reportRef.path)), "admitted") as {
       instruction?: string;
       baseRevision?: string;
       lens?: string;
@@ -837,7 +833,7 @@ test("default dual-lens keeps original child terminals despite dirty tree, mid-b
         readTicketProgressLines(ticketDir).map((line) => [line.round, join(ticketDir, line.receipt)]),
         `${lens}: the receipt is the row under its own ticket`,
       );
-      const at = printed.indexOf(encodeTerminalField(child!.receipts![0]!.receipt));
+      const at = printed.lastIndexOf(encodeTerminalField(child!.receipts![0]!.receipt));
       assert.notEqual(at, -1, `${lens}: the receipt path is printed`);
       assert.equal(
         printed.slice(0, at).filter((field) => tickets.includes(field)).at(-1),

@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, sessionFaultNotes, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, sessionFaultNotes, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -375,20 +375,8 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.ok(Array.isArray((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings));
     assert.equal(((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings as unknown[]).length, 1);
 
-    const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
-      ?.path;
-    assert.ok(reportPath);
-    const report = terminalBodyAt(reportPath!, "report") as {
-      role: string;
-      outcome?: { payloads?: unknown };
-      cost: unknown;
-    };
-    assert.equal(report.role, "doctor");
-    assert.equal(report.outcome !== undefined && "payloads" in report.outcome, false);
-    assert.deepEqual(submittedParams(dirname(reportPath!)), [candidateDetails]);
-    // #836: settlement publishes machine cost from the audit candidate entry
-    // as an independent report field beside the role's original payload.
-    assert.deepEqual(report.cost, candidateCost);
+    // The report the caller opens is the receipt as submitted (#1299).
+    assert.deepEqual(reportedReceipts(completed.terminal!), [candidateDetails]);
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
     const runState = readCurrentSection(
@@ -461,14 +449,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       (objectPayloads(refused.terminal!.roleOutcome)[0] ?? {}).reason,
       "Need retained sessions",
     );
-    const refusedReportPath = refused.terminal!.artifacts.find((a) => a.kind === "report")?.path;
-    assert.ok(refusedReportPath);
-    const refusedReport = terminalBodyAt(refusedReportPath, "report") as {
-      cost?: unknown;
-      auditNoReceipt?: unknown;
-    };
-    assert.equal(refusedReport.cost, undefined);
-    assert.equal(refusedReport.auditNoReceipt, undefined);
+    assert.equal(reportedReceipts(refused.terminal!).length, 1);
   });
 });
 
@@ -529,14 +510,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
     assert.equal(doctorCalls, 2);
     assert.equal(reviewCalls, 2);
     assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.reason, "doctor report 2");
-    const laterReport = result.terminal!.artifacts.find((a) => a.kind === "report");
-    assert.ok(laterReport);
-    const laterBody = terminalBodyAt(laterReport.path, "report") as {
-      cost?: unknown;
-      auditNoReceipt?: unknown;
-    };
-    assert.equal(laterBody.cost, undefined);
-    assert.equal(laterBody.auditNoReceipt, undefined);
+    assert.equal((reportedReceipts(result.terminal!).at(-1) as { reason?: unknown }).reason, "doctor report 2");
   });
 });
 

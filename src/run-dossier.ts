@@ -283,14 +283,15 @@ export function renderCurrentSync(runDirectory: string): void {
   }
 }
 
-function appendPageRow(runDirectory: string, section: CurrentSection, page: Record<string, unknown>): void {
-  appendSitianRecord({
+/** Append one whole-page row; returns the file the row landed in. */
+function appendPageRow(runDirectory: string, section: CurrentSection, page: Record<string, unknown>): string {
+  return appendSitianRecord({
     level: "event",
     kind: PAGE_ROW_KIND[section],
     sessionParent: sessionFileOf(runDirectory),
     source: "run-dossier",
     payload: page,
-  });
+  }).recordFile;
 }
 
 /**
@@ -340,14 +341,15 @@ export function readStateRowsSync(runDirectory: string): readonly Record<string,
   return state.rows;
 }
 
-/** Rewrite one section whole: append its row, then render `current.json`. */
+/** Rewrite one section whole: append its row, then render `current.json`. Returns the row's file. */
 export function writeSectionSync(
   runDirectory: string,
   section: CurrentSection,
   value: Record<string, unknown>,
-): void {
-  appendPageRow(runDirectory, section, value);
+): string {
+  const recordFile = appendPageRow(runDirectory, section, value);
   renderCurrentSync(runDirectory);
+  return recordFile;
 }
 
 /**

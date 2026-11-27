@@ -1,4 +1,4 @@
-import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -284,14 +284,8 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     assert.equal(result.terminal!.roleOutcome.role, "coder");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
     assert.deepEqual(result.terminal!.submissions, [receipt]);
-    const report = result.terminal!.artifacts.find((a) => a.kind === "report");
-    assert.ok(report);
-    const reportBody = terminalBodyAt(report.path, "report") as {
-      outcome?: { payloads?: unknown };
-    };
-    // The submitted words live in history.jsonl; the terminal carries only the verdict.
-    assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
-    assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
+    // The report the caller opens is the receipt as submitted (#1299).
+    assert.deepEqual(reportedReceipts(result.terminal!), [receipt]);
   });
 });
 

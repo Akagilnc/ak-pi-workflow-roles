@@ -2,7 +2,7 @@
  * #1088 public Collector: seat + request-manifest admission; LLM submits groups.
  * Code-collection tools (observe/bind/wait/handbook) are gone.
  */
-import { submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -64,15 +64,8 @@ test("Collector receipt travels unchanged through the envelope into Terminal and
     });
     assert.equal(result.exitCode, 0, JSON.stringify(result));
     assert.deepEqual(result.terminal && objectPayloads(result.terminal.roleOutcome), [details]);
-    const reportPath = result.terminal?.artifacts.find((artifact) => artifact.kind === "report")?.path;
-    assert.ok(reportPath);
-    const artifact = terminalBodyAt(reportPath, "report") as {
-      outcome?: { payloads?: unknown };
-    };
-    // The submitted groups live in history.jsonl; the terminal carries only the verdict.
-    assert.equal(artifact.outcome !== undefined && "payloads" in artifact.outcome, false);
-    const submitted = submittedParams(dirname(reportPath)) as readonly { groups?: unknown[] }[];
-    assert.deepEqual(submitted, [details]);
+    // The report the caller opens is the receipt as submitted (#1299).
+    assert.deepEqual(reportedReceipts(result.terminal!), [details]);
   });
 });
 

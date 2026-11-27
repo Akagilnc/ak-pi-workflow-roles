@@ -1939,7 +1939,7 @@ test("an in-call resume persists an after-dispatch diarist relocation at the tic
     assert.ok(turns >= 2, "the interrupted leg must be resumed in the same call");
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
-    const currentPath = join(ticketPlacement.runDirectory, "current.json");
+    const currentPath = join(ticketPlacement.runDirectory, "state.jsonl");
     // Structured failure contract on the relocated run; stderr pointer delivery is
     // a human-facing hint observed on real runs (#1161 T2 / #1058).
     const error = terminalBodyAt(currentPath, "error") as {

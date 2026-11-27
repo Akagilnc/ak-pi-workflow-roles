@@ -134,11 +134,14 @@ try {
     if ("identity" in outcome) identity = outcome.identity;
     if ("details" in outcome) details = outcome.details;
   }
+  const { readFile } = await import("node:fs/promises");
+  /** The payload of the last row of `kind` in a run's state.jsonl. */
+  const lastStatePayload = async (statePath, kind) => (await readFile(statePath, "utf8")).split("\n")
+    .filter((line) => line.trim() !== "").map((line) => JSON.parse(line)).filter((row) => row.kind === kind).at(-1)?.payload;
   const errorArtifact = result.terminal?.artifacts?.find((item) => item.kind === "error");
   if (errorArtifact?.path) {
-    const { readFile } = await import("node:fs/promises");
-    // The artifact ref names the run's current.json; the error is its terminal section.
-    const { terminal } = JSON.parse(await readFile(errorArtifact.path, "utf8"));
+    // The artifact ref names the run's state.jsonl; the error is its last terminal row.
+    const terminal = await lastStatePayload(errorArtifact.path, "terminal");
     if (terminal?.face !== "error") throw new Error(`error artifact ref does not name an error terminal: ${terminal?.face}`);
     const errorBody = terminal.body;
     packageFact = errorBody.packageFact;
@@ -162,9 +165,7 @@ try {
     `${runId}@judge`,
   );
   try {
-    const { readFile } = await import("node:fs/promises");
-    const raw = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8"));
-    runState = raw.runState?.state;
+    runState = (await lastStatePayload(join(runDirectory, "state.jsonl"), "run-state"))?.state;
   } catch {
     runState = undefined;
   }

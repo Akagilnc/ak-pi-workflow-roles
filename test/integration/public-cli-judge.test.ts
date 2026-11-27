@@ -1,4 +1,4 @@
-import { submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -303,16 +303,9 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     for (const artifact of terminal.artifacts) {
       await access(artifact.path);
     }
-    const reportRef = terminal.artifacts.find((a) => a.kind === "report")!;
-    const report = terminalBodyAt(reportRef.path, "report") as { role: string; runId: string; outcome: TerminalRoleOutcome };
-    assert.equal(report.role, "judge");
-    assert.equal(report.runId, "run-cli-judge-001");
-    assert.equal(report.outcome.kind, "accepted");
-    // #836: the role's original payload (not an invented top-level status) is what
-    // history.jsonl kept; the persisted report carries only the verdict.
-    assert.equal("payloads" in report.outcome, false);
+    // #836 / #1299: the report is the role's original receipt, not an invented top-level status.
     assert.deepEqual(
-      submittedParams(dirname(reportRef.path)).map((params) => (params as { status?: string }).status),
+      reportedReceipts(terminal).map((params) => (params as { status?: string }).status),
       ["converged"],
     );
   });

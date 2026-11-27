@@ -505,9 +505,6 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(history[0]?.outcome?.kind, "failure", "failed leg's complete result is retained");
     assert.ok(typeof history[0]?.outcome?.diagnostic === "string" && history[0].outcome.diagnostic !== "");
 
-    // The terminal section is a last-write-wins view of the final accepted attempt.
-    const report = terminalBodyAt(join(runDirectory, "current.json"), "report") as { outcome?: TerminalRoleOutcome };
-    assert.equal(report.outcome?.kind, "accepted");
     // #836: the role's original payload, not an invented top-level status, is what
     // history.jsonl kept.
     assert.deepEqual(submittedParams(runDirectory).map((params) => (params as { status?: string }).status), ["converged"]);

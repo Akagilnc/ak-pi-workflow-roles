@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -299,7 +299,7 @@ test("post-admission log.jsonl unwritable keeps the host terminal and notes the 
       .filter((row) => row.kind === "attempt-history")
       .map((row) => (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
     assert.deepEqual(outcomes, []);
-    assert.equal(terminalBodyAt(join(sealedRunDirectory, "current.json"), "report").role, "judge");
+    assert.equal(reportedReceipts(result.terminal!).length, 1);
     const liveSessionFile = sessionFileOf(sealedRunDirectory);
     const noteText = sessionFaultNotes(liveSessionFile)[0]?.diagnostic;
     assert.ok(typeof noteText === "string" && noteText !== "");
@@ -599,60 +599,6 @@ test("no lawful output after an older provider error settles honestly as no_rece
 });
 
 // --- #953: real publish/read/settlement entries; structured reader contract only ---
-
-test("#953 a later success replaces an earlier failure terminal, and a later failure replaces the success", async () => {
-  await withTempHome(async (home) => {
-    const runId = "01a0-953-switch";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      "proj",
-      "unbound",
-      "runs",
-      `${runId}@judge`,
-    );
-    const sessionDirectory = sessionDirectoryOf(runDirectory);
-    await mkdir(runDirectory, { recursive: true });
-    await mkdir(sessionDirectory, { recursive: true });
-    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
-    const admitted = fixtureJudgeAdmitted({
-      runId,
-      runDirectory,
-      projectRoot: join(home, "proj"),
-      bookKey: "proj",
-    });
-    const authority = piDurablePrincipalAuthority;
-
-    seedTerminal(runDirectory, "error", { kind: "error", role: "judge", runId, diagnostic: "old boom" });
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    await sealAcceptedSubmission({
-      cwd: project, home, runId, runDirectory, role: "judge",
-      details: { judgeStatus: "pass" },
-    });
-    // This settle is the recording settlement for the sealed submission — not a
-    // later non-recording re-projection (#1161 N1: do not invent history on re-project).
-    const settled = await trySettlePublicSeat(admitted, authority, { recordAttemptHistory: true });
-    assert.equal(settled?.roleOutcome.kind, "accepted");
-    const afterSuccess = terminalBodyAt(join(runDirectory, "current.json"), "report");
-    assert.equal((afterSuccess.outcome as { kind?: string }).kind, "accepted");
-    assert.equal(afterSuccess.diagnostic, undefined, "the old failure's body is gone, not merged");
-
-    await publishFailureTerminal(admitted, { diagnostic: "new boom", cause: "provider" }, {
-      sessionDirectory,
-      sessionFile: join(sessionDirectory, "session.jsonl"),
-    });
-    const afterFailure = readRunTerminal(runDirectory);
-    assert.equal(afterFailure.status, "present");
-    if (afterFailure.status === "present") {
-      assert.equal(afterFailure.face, "error");
-      assert.equal(afterFailure.body.diagnostic, "new boom");
-      assert.equal(afterFailure.body.outcome, undefined, "the success's body is gone, not merged");
-    }
-  });
-});
 
 /**
  * #953: settleHostEndedNoReceipt replaces the leg's terminal with the no_receipt

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { renderCurrentSync, type CurrentSection, type DerivedSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
@@ -172,19 +172,31 @@ export function submittedParams(runDirectory: string): unknown[] {
 }
 
 /**
- * The body of the terminal section a `TerminalArtifactRef.path` (the run's
- * current.json) names, after checking the face.
+ * The body of the terminal row an error / no_receipt pointer names: the last
+ * `terminal` row of that file (the run's state.jsonl), after checking the face.
  */
 export function terminalBodyAt(
-  currentJsonPath: string,
-  face: "report" | "error" | "no_receipt",
+  statePath: string,
+  face: "error" | "no_receipt",
 ): Record<string, unknown> {
-  assert.equal(currentJsonPath.endsWith("current.json"), true, `artifact ref is the run's current.json: ${currentJsonPath}`);
-  const terminal = readCurrentJson(dirname(currentJsonPath)).terminal as
-    { face?: string; at?: unknown; body?: Record<string, unknown> } | undefined;
+  assert.equal(basename(statePath), "state.jsonl", `terminal pointer is the run's state.jsonl: ${statePath}`);
+  const terminal = statePayloads<{ face?: string; at?: unknown; body?: Record<string, unknown> }>(dirname(statePath), "terminal").at(-1);
   assert.equal(terminal?.face, face);
   assert.equal(typeof terminal?.at, "string");
   return terminal!.body!;
+}
+
+/**
+ * The receipts a settled terminal's report artifacts open (#1299): each report path is
+ * one of the terminal's own `receipts` rows, in the same order.
+ */
+export function reportedReceipts(terminal: {
+  readonly artifacts: readonly { readonly kind: string; readonly path: string }[];
+  readonly receipts?: readonly { readonly receipt: string }[];
+}): unknown[] {
+  const reports = terminal.artifacts.filter((artifact) => artifact.kind === "report").map((artifact) => artifact.path);
+  assert.deepEqual(reports, (terminal.receipts ?? []).map((row) => row.receipt));
+  return reports.map((path) => JSON.parse(readFileSync(path, "utf8")) as unknown);
 }
 
 /**

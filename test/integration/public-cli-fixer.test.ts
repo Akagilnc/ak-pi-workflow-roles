@@ -28,7 +28,7 @@ import {
 import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
-import { readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -179,14 +179,8 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
         : [],
       ["planned"],
     );
-      const report = result.terminal?.artifacts.find((a) => a.kind === "report");
-      assert.ok(report);
-      const reportBody = terminalBodyAt(report.path, "report") as {
-        outcome?: { payloads?: unknown };
-      };
-      // The submitted words live in history.jsonl; the terminal carries only the verdict.
-      assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
-      assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
+      // The report the caller opens is the receipt as submitted (#1299).
+      assert.deepEqual(reportedReceipts(result.terminal!), [receipt]);
       const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
       const planRunDirectory =
         (await findRunDirectoryById(home, "run-cli-fixer-plan"))

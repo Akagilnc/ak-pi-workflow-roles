@@ -5,7 +5,8 @@
  * submission and settlement faces. The navigator is the one exception: it is a
  * table lookup (#1192), so it settles without any host turn.
  */
-import { terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts } from "../helpers/run-dossier-fixture.ts";
+import { roleFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import assert from "node:assert/strict";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -100,8 +101,9 @@ test("#505 every active seat routes, submits, and settles from the public entry"
       const report = result.terminal?.artifacts.find((artifact) => artifact.kind === "report");
       let reportRole: unknown;
       if (report !== undefined) {
-        const body = terminalBodyAt(report.path, "report") as { role?: unknown };
-        reportRole = body.role;
+        // The report is this leg's accepted receipt (#1299): `<run>/receipts/<n>.json`.
+        assert.equal(reportedReceipts(result.terminal!).length > 0, true);
+        reportRole = roleFromRunDirectory(dirname(dirname(report.path)));
       }
       const problems: string[] = [];
       if (record.role === "navigator" ? routed.length > 0 : !routed.includes(record.role)) {

@@ -234,7 +234,7 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
       const runDirectory = join(
         home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${row.runId}@${role}`,
       );
-      const noReceipt = terminalBodyAt(join(runDirectory, "current.json"), "no_receipt") as {
+      const noReceipt = terminalBodyAt(join(runDirectory, "state.jsonl"), "no_receipt") as {
         role?: string;
         runId?: string;
         outcome?: { kind?: string };

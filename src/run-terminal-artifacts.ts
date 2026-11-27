@@ -39,13 +39,13 @@ export const ATTEMPT_HISTORY_IDENTITY_FIELD = "attemptHistoryIdentity" as const;
  */
 export const TERMINAL_COURT_ATTEMPT_FIELD = "courtAttemptId" as const;
 
-/** Replace the leg's terminal. */
+/** Replace the leg's terminal; returns the file the terminal row landed in. */
 export function writeRunTerminal(
   runDirectory: string,
   face: RunTerminalFace,
   body: Record<string, unknown>,
-): void {
-  writeSectionSync(runDirectory, "terminal", { face, at: new Date().toISOString(), body });
+): string {
+  return writeSectionSync(runDirectory, "terminal", { face, at: new Date().toISOString(), body });
 }
 
 /**

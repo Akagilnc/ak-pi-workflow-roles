@@ -1476,7 +1476,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     assert.equal(dispatches, 1);
     assert.notEqual(resumed.exitCode, 0);
     // Host-dispatched failure: this call's roleOutcome structured reason ↔ terminal body (#1161 T2).
-    const noted = terminalBodyAt(join(runDirectory, "current.json"), "error") as {
+    const noted = terminalBodyAt(join(runDirectory, "state.jsonl"), "error") as {
       diagnostic?: unknown;
       details?: { exitCode?: unknown };
     };
@@ -1758,7 +1758,7 @@ test("public resume failures persist structured diagnostics", async () => {
           outcome?.kind === "failure" && typeof outcome.diagnostic === "string" && outcome.diagnostic.length > 0,
           true,
         );
-        const record = terminalBodyAt(join(runDirectory, "current.json"), "error") as {
+        const record = terminalBodyAt(join(runDirectory, "state.jsonl"), "error") as {
           kind?: unknown;
           runId?: unknown;
           diagnostic?: unknown;
