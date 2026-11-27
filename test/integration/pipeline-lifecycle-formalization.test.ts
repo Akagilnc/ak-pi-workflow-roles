@@ -1,4 +1,4 @@
-import { reportedReceipts, readStatePage, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, readStatePage, submittedParams } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";

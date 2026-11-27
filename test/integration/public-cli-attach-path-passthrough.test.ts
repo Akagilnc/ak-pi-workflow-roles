@@ -4,7 +4,7 @@
  * input and run-directory shape only (no generated-prompt prose locks).
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { readStatePage } from "../helpers/run-dossier-fixture.ts";
 import { join } from "node:path";
 import { test } from "vitest";

@@ -10,9 +10,9 @@ import { readTicketProgressLines } from "../../src/ticket-progress.ts";
  * resume does not take a package writer-lease gate before host CLI resume.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
 import { test } from "vitest";
 import { execFileSync, spawn } from "node:child_process";

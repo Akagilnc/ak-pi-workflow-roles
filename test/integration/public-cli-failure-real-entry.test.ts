@@ -1,10 +1,10 @@
-import { historyPayloads, statePayloads, terminalBodyAt, lockStateRows, unlockStateRows, runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads, terminalBodyAt, lockStateRows, unlockStateRows, runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { mkdirSync, statSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";

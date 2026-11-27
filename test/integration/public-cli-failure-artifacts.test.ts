@@ -1,4 +1,4 @@
-import { reportedReceipts, historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockStateRows, unlockStateRows } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockStateRows, unlockStateRows } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -12,21 +12,17 @@ import {
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { statSync } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import {
-  publishFailureTerminal,
+  
   settleHostEndedNoReceipt,
 } from "../../src/public-cli/settlement.ts";
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {

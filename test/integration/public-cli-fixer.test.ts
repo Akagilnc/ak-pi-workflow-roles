@@ -12,7 +12,7 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -28,7 +28,7 @@ import {
 import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
-import { reportedReceipts, readStatePage, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, readStatePage } from "../helpers/run-dossier-fixture.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";

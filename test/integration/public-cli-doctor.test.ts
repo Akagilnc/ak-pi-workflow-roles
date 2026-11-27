@@ -1,4 +1,4 @@
-import { reportedReceipts, historyPayloads, statePayloads, lockStateRows, readStatePage, sessionFaultNotes, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, historyPayloads, readStatePage, sessionFaultNotes, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -18,9 +18,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "vitest";
-import { statSync } from "node:fs";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
@@ -306,7 +305,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     // #836: captured from the same real `loadDoctorCase`/role payload the
     // piRunner uses, so the later outcome.payloads/report.cost assertions check
     // against the actual values rather than hand-authored duplicates.
-    let candidateCost: unknown;
     let candidateDetails: unknown;
     const completedIo = captureIo();
     const completed = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "40", "--project", project, "inspect"],
@@ -329,7 +327,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           }
           const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
           const patient = await loadDoctorCase(casePath);
-          candidateCost = patient.cost;
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           const details = sampleCompletedDoctorOutput(patient.identity, findingObservation);

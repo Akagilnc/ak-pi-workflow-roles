@@ -16,7 +16,7 @@
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
-  historyPayloads,
+  
   readHistoryRows,
   statePayloads,
   readStatePage,
@@ -30,8 +30,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
 import { execFileSync } from "node:child_process";
-import { chmodSync, statSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { sessionDirectoryOf, sessionFileOf, subjectDirectoryOfRun } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { dirname, join } from "node:path";

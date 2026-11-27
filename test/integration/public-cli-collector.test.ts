@@ -2,10 +2,10 @@
  * #1088 public Collector: seat + request-manifest admission; LLM submits groups.
  * Code-collection tools (observe/bind/wait/handbook) are gone.
  */
-import { reportedReceipts, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "vitest";
 import { withTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject as seedProject } from "../helpers/failure-settlement-kit.ts";

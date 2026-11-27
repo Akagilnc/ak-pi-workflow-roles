@@ -5,7 +5,7 @@ import {
   roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { readStatePage, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { readStatePage, submittedParams } from "../helpers/run-dossier-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -22,7 +22,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "vitest";
 
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";

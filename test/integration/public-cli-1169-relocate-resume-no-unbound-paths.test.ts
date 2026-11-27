@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { readStatePage } from "../helpers/run-dossier-fixture.ts";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 

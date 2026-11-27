@@ -1,4 +1,4 @@
-import { reportedReceipts, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -15,7 +15,7 @@ import {
   mkdir,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "vitest";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -25,7 +25,7 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 import { payloadStatusSequence, objectPayloads } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
-  type TerminalRoleOutcome,
+  
 } from "../../src/public-cli/terminal.ts";
 import {
   packageRoot,

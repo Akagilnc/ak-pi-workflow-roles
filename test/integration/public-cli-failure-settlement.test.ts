@@ -1,10 +1,9 @@
-import { historyPayloads, statePayloads, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
-import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -22,7 +21,6 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
-import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {

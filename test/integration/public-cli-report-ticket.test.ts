@@ -32,7 +32,7 @@ import {
 } from "../../src/report-ticket-tool.ts";
 import {
   formatRunLeaf,
-  isUnboundRunDirectory,
+  
   runDirectoryFromSessionDirectory,
   sessionDirectoryOf,
   sessionFileOf,
@@ -44,8 +44,8 @@ import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   historyPayloads,
-  lockStateRows,
   readStatePage,
+  reportedReceipts,
   seedStatePage,
 } from "../helpers/run-dossier-fixture.ts";
 import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
@@ -573,6 +573,8 @@ test("#1268 unbound submission stays accepted without opening another turn", asy
           `${hostName}/${action}`,
         );
         assert.equal(result.terminal!.receipts!.every((filed) => existsSync(filed.receipt)), true);
+        // The report paths are those receipts and open after a filing move too (#1299).
+        assert.equal(reportedReceipts(result.terminal!).length, rows.length, `${hostName}/${action}`);
         assert.equal(Object.hasOwn(result.terminal!, "runId"), false);
       }
     }

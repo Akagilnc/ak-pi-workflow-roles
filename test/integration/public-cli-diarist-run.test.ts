@@ -3,7 +3,7 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
-import { historyPayloads, submittedParams, statePayloads, readStatePage, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { submittedParams, statePayloads, readStatePage, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -1932,10 +1932,10 @@ test("an in-call resume persists an after-dispatch diarist relocation at the tic
     assert.ok(turns >= 2, "the interrupted leg must be resumed in the same call");
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
-    const currentPath = join(ticketPlacement.runDirectory, "state.jsonl");
-    // Structured failure contract on the relocated run; stderr pointer delivery is
-    // a human-facing hint observed on real runs (#1161 T2 / #1058).
-    const error = terminalBodyAt(currentPath, "error") as {
+    // The error path the caller is handed opens after the move: the relocated leg's state.jsonl.
+    const errorPath = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error")?.path;
+    assert.equal(errorPath, join(ticketPlacement.runDirectory, "state.jsonl"));
+    const error = terminalBodyAt(errorPath!, "error") as {
       kind?: unknown;
       runId?: unknown;
       diagnostic?: unknown;

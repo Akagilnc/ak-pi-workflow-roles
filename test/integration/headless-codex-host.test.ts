@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -13,7 +13,7 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
-import { historyPayloads, readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
   if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return false;
@@ -116,7 +116,7 @@ const events = [
   ...(prompt.endsWith("missing-terminal") ? [] : [{ type: "turn.completed" }]),
 ];
 process.stdout.write(JSON.stringify(events[0]) + "\\n");
-writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
+if (!prompt.endsWith("no-rollout")) writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
 const body = events.slice(1).map(JSON.stringify).join("\\n") + "\\n";
 process.stdout.write(body, () => {
   if (prompt.endsWith("exit-17")) {
@@ -368,6 +368,19 @@ process.stdout.write(body, () => {
     });
     assert.equal(failed.code, 0);
     assert.equal(failed.knownFailure, undefined);
+
+    // The CLI already cleared its rollout: both copies fail, the turn is unchanged, and the
+    // warning row names the original by the sessions directory and thread (#1299).
+    await rm(nativeRollout);
+    const cleared = await host.executeTurn({ ...request, continuation: { kind: "initial", prompt: "no-rollout" } });
+    assert.equal(cleared.code, 0);
+    assert.equal(cleared.knownFailure, undefined);
+    const warnings = (await readSitianRecords(join(root, "log.jsonl"))).records
+      .filter((record) => record.kind === HOST_SESSION_RECORD_KIND)
+      .map((record) => record.payload as { type?: string; nativePath?: string; sessionId?: string });
+    const last = warnings.at(-1);
+    assert.deepEqual({ type: last?.type, nativePath: last?.nativePath, sessionId: last?.sessionId },
+      { type: "native-session-warning", nativePath: join(root, ".codex", "sessions"), sessionId: "thread-fake-1" });
 
     // Git work tree recognized (.git present) but rev-parse fails → loud terminal, no spawn.
     // Point gitdir at a missing path so nested temp dirs inside a real worktree still fail.
