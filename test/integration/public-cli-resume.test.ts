@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, runLogPayloads, sessionFaultNotes, seedStatePage, terminalBodyAt, lockStateRows, unlockStateRows, clearStateRows } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads, sessionFaultNotes, seedStatePage, terminalBodyAt, lockStateRows, unlockStateRows, clearStateRows } from "../helpers/run-dossier-fixture.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
@@ -113,7 +113,7 @@ function sealedPublicationBlockedHost(
   });
   // The seal is on the record once the turn returns; the leg's run-state write is
   // next. Locking state.jsonl (the append fails on the file's own mode)
-  // refuses that write while reads and history.jsonl appends still work. The fault
+  // refuses that write while reads still work. The fault
   // passes once a gate officer's turn begins, so the gates' own lawful pointer
   // writes into the judge's dossier are not caught by it.
   const restoreWritable = async () => {
@@ -311,75 +311,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
     }
   });
 
-  // Direct throw after seal: settle/present rejects out of dispatch; sealed stop
-  // must still consult ledger before any auto-resume redispatch (#648).
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-lawful-publish-throw-001";
-    const captured = captureIo();
-    const { host: inner, dispatches, restoreWritable } = sealedPublicationBlockedHost(
-      "lawful then dispatch throws after seal",
-      { blockReportPublication: false },
-    );
-
-    try {
-      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then throw after seal under 429"],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          credentials: { "openai-codex": true, xai: true },
-          createRunId: () => runId,
-          // EISDIR poison targets later audit/persist of run-state rows.
-          // Bind up front so post-host board discovery is not owed; damage still
-          // fails closed on the intended seam (not washed as unbound no-ticket).
-          boundTicketNumber: 1171,
-          io: captured.io,
-          roleTurnHost: {
-            executeTurn: async (request) => {
-              const out = await inner.executeTurn(request);
-              if (request.activation.role === "judge") {
-                // The run's facts are rows (the lifecycle page is a state.jsonl row): poison the
-                // row file the later audit reads the run-state from, as main poisoned run-state.json.
-                const statePath = join(request.runDirectory, "state.jsonl");
-                await rm(statePath, { force: true });
-                await mkdir(statePath);
-              }
-              return out;
-            },
-          },
-        },
-      );
-
-      // Persist notes the damaged row file. The later mandatory audit reads that same
-      // run-state, so the parent is not delivered as accepted.
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.terminal, undefined);
-      assert.equal(dispatches(), 1);
-      const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
-      const runDirectory =
-        (await findRunDirectoryById(home, runId))
-        ?? join(
-          home,
-          ".ak-roles",
-          "books",
-          resolveBookKeyFromGit(project),
-          "unbound", "runs",
-          `${runId}@judge`,
-        );
-      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
-      assert.ok(typeof note === "string" && note !== "");
-      const seals = historyPayloads<{ receipt: string }>(runDirectory, "sealed");
-      assert.equal(seals.length, 1);
-      assert.deepEqual(JSON.parse(await readFile(join(runDirectory, "../..", seals[0]!.receipt), "utf8")),
-        { status: "converged", note: "lawful then dispatch throws after seal" });
-    } finally {
-      await restoreWritable();
-    }
-  });
-
   // Failing ledger authority: read errors must preserve true cause and fail closed —
   // never wash into "unsealed" and redispatch (#648).
   await withTempHome(async (home) => {
@@ -408,7 +339,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
             executeTurn: async (request) => {
               const out = await inner.executeTurn(request);
               // Poison the same history file settlement reads.
-              const ledgerFile = join(request.runDirectory, "history.jsonl");
+              const ledgerFile = join(request.runDirectory, "state.jsonl");
               await rm(ledgerFile, { force: true });
               await mkdir(ledgerFile, { recursive: true });
               return out;
@@ -433,8 +364,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.deepEqual(result.terminal!.submissions, [JSON.parse(await readFile(join(runDirectory, "receipts/1.json"), "utf8"))]);
       assert.deepEqual(result.terminal!.receipts ?? [], []);
 
-      // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
-      // Settlement after the turn still fails closed on the ledger authority error.
+      // #1300: the leg's identity and run-state live in that same ledger, so a manual
+      // resume of the poisoned leg is refused before any host turn.
       let resumeDispatches = 0;
       const { io: resumeIo } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", "1171", "judge"], {
@@ -457,11 +388,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
           },
         }),
       });
-      assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
+      assert.equal(resumeDispatches, 0);
       assert.equal(resumeResult.exitCode, 1);
-      assert.equal(resumeResult.terminal?.roleOutcome.kind, "failure");
-      assert.equal(resumeResult.terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-      assert.deepEqual(resumeResult.terminal.submissions, result.terminal!.submissions);
+      assert.equal(resumeResult.terminal, undefined);
     } finally {
       await restoreWritable();
     }
@@ -1757,11 +1686,11 @@ test("public resume failures persist structured diagnostics", async () => {
         argv: readonly string[],
       ) => {
         const callsBefore = seen.length;
-        const diagnosticsBefore = runLogPayloads(runDirectory, "resume-diagnostic");
+        const diagnosticsBefore = statePayloads(runDirectory, "resume-diagnostic");
         const result = await resume(argv);
         assert.notEqual(result.exitCode, 0);
         assert.equal(seen.length, callsBefore);
-        const diagnostics = runLogPayloads(runDirectory, "resume-diagnostic") as Array<{
+        const diagnostics = statePayloads(runDirectory, "resume-diagnostic") as Array<{
           runId?: unknown;
           diagnostic?: unknown;
           details?: unknown;
@@ -1893,7 +1822,7 @@ test("public resume failures persist structured diagnostics", async () => {
         { name: "pi", create: () => ({ ok: true as const, host: acceptedChildHost }) },
         { name: "claude", create: () => ({ ok: true as const, host: acceptedChildHost }) },
       ];
-      const parentDiagnosticsBefore = runLogPayloads(parent.runDirectory, "resume-diagnostic");
+      const parentDiagnosticsBefore = statePayloads(parent.runDirectory, "resume-diagnostic");
       const parentResume = captureIo();
       const parentResult = await runAkRole(
         ["resume", "--model", "test/caller-seat:high", "2005", "judge"],
@@ -1914,7 +1843,7 @@ test("public resume failures persist structured diagnostics", async () => {
       );
       assert.deepEqual(statePayloads(parent.runDirectory, "admitted-request"), []);
       // Parent preload fails before this parent's host turn — this-call append only.
-      const parentDiagnostics = runLogPayloads(parent.runDirectory, "resume-diagnostic") as Array<{
+      const parentDiagnostics = statePayloads(parent.runDirectory, "resume-diagnostic") as Array<{
         runId?: unknown;
         diagnostic?: unknown;
         details?: unknown;

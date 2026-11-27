@@ -29,7 +29,7 @@ import {
   receiptAttemptPointer,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { readHistoryRows } from "../helpers/run-dossier-fixture.ts";
+import { readStateRows } from "../helpers/run-dossier-fixture.ts";
 import {
   createSubmissionLedgerHost,
   readRecordedSubmissionRows,
@@ -219,7 +219,7 @@ test.each(["accept", "bounce", "interrupt"])("the caller sees the host's origina
     assert.deepEqual(readTicketProgressLines(subject).filter(row => row.seat === "judge").map(({receipt, round}) => ({receipt: join(subject, receipt), round})), filed);
     assert.deepEqual(await Promise.all(originals.map(async (_, i) => JSON.parse(await readFile(join(leg, `receipts/${i + 1}.json`), "utf8")))), originals);
     // Compare complete JSON values at every depth, regardless of the event's shape.
-    JSON.stringify(readHistoryRows(leg), (_, value) => {
+    JSON.stringify(readStateRows(leg), (_, value) => {
       if (value && typeof value === "object") assert.ok(!originals.some(original => isDeepStrictEqual(value, original)));
       return value;
     });

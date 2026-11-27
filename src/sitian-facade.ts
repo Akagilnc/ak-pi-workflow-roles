@@ -23,9 +23,7 @@ export function sitianReport(input: SitianRecordInput): RecordPointer {
 }
 
 /**
- * One record of a role run: history.jsonl for the history kinds and state.jsonl for the
- * state kinds (see the appender), log.jsonl for the run's own diagnostics (host original copy
- * warnings, dispatch / resume / post-admission faults). Same single entry
+ * One record of a role run, appended to the run's one ledger. Same single entry
  * as every other record; the run is named, never a file path.
  */
 export function reportRunRecord(

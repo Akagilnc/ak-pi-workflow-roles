@@ -15,7 +15,7 @@
  * `ak-role resume`) mints a new one. Never courtAttemptId, never Pi session
  * toolResult join keys, and never a detour-owned sidecar file.
  */
-import { readPageSync, RUN_LOG_FILE } from "./run-dossier.ts";
+import { readPageSync, RUN_STATE_FILE } from "./run-dossier.ts";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,12 +42,12 @@ export const ENGINE_DETOUR_CALL_KIND = "engine-detour-call" as const;
 export const ENGINE_DETOUR_TOOL_USAGE_FACT_KEY = "engineDetourToolUsage" as const;
 
 /**
- * Run-relative path of the log that holds one detour call's record.
+ * Run-relative path of the ledger that holds one detour call's record.
  * Openable once the leg directory is known from the paths the terminal reports
  * (receipt, artifact, or the no-receipt run pointer).
  * Contains no runId bytes itself (#108 + #537).
  */
-export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE = RUN_LOG_FILE;
+export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE = RUN_STATE_FILE;
 
 /** stdout UTF-8 byte length (ticket-frozen metric; empty stdout is real 0). */
 export function engineDetourStdoutByteLength(stdout: string): number {

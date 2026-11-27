@@ -18,7 +18,7 @@ import {
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { runDirectoryOfSessionFile, sessionFileOf } from "./role-run-placement.ts";
-import { RUN_HISTORY_FILE } from "./run-dossier-files.ts";
+import { RUN_STATE_FILE } from "./run-dossier-files.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
   appendSitianRecordBlock,
@@ -154,12 +154,11 @@ export async function rehomeUnboundTicketProvenance(
 ): Promise<void> {
   const ticketInput = ticketProvenanceRecordInput(ticketNumber, cwd, home);
 
-  // Live staging: ticket-provenance rows in the run's history.jsonl. Append-only
-  // history keeps the staging rows; the ticket-root diary is the home.
-  // Old run/records.jsonl is not a runtime input (#1161).
+  // Live staging: ticket-provenance rows in the run's own ledger. Append-only,
+  // so the staging rows stay; the ticket-root diary is the home.
   let history: string;
   try {
-    history = await readFile(join(runDirectory, RUN_HISTORY_FILE), "utf8");
+    history = await readFile(join(runDirectory, RUN_STATE_FILE), "utf8");
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return;
     throw error;

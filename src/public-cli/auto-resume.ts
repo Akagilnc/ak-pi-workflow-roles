@@ -144,8 +144,8 @@ function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
 
 /**
  * Retain one throwing dispatch attempt's complete exception as a line in the
- * run's log.jsonl, then leave an addressable pointer in the session principal
- * (custom entry). The log only appends (史必追加, #419): a later attempt can
+ * run's state.jsonl, then leave an addressable pointer in the session principal
+ * (custom entry). The ledger only appends (史必追加, #419): a later attempt can
  * never overwrite an earlier attempt's record.
  */
 async function retainDispatchError(

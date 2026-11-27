@@ -496,7 +496,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.ok(typeof terminals[0]?.body?.diagnostic === "string" && terminals[0].body.diagnostic !== "");
 
     // #836: the role's original payload, not an invented top-level status, is what
-    // history.jsonl kept.
+    // state.jsonl kept.
     assert.deepEqual(submittedParams(runDirectory).map((params) => (params as { status?: string }).status), ["converged"]);
   });
 });

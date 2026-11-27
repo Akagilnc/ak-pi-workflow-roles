@@ -12,7 +12,7 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { isRecord } from "../../src/unknown-value.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
-import { readHistoryRows, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { readStateRows, statePayloads } from "../helpers/run-dossier-fixture.ts";
 
 function isNullUnion(schema: unknown): boolean {
   if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return false;
@@ -71,9 +71,9 @@ function assertStrictObjectNodes(node: unknown, path: string): void {
   }
 }
 
-/** The independent package-fault notes the run's log.jsonl carries. */
+/** The independent package-fault notes the run's state.jsonl carries. */
 function packageFaultNotes(runDirectory: string): unknown[] {
-  return runLogPayloads(runDirectory, "post-admission-diagnostic");
+  return statePayloads(runDirectory, "post-admission-diagnostic");
 }
 
 /** Medium tracer: real process boundary, native new/resume protocol, and typed receipt. */
@@ -220,9 +220,9 @@ process.stdout.write(body, () => {
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
     assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     // A copied original leaves no pointer or landing row; the start leaves no delivery row (#1299).
-    assert.deepEqual((await readSitianRecords(join(root, "log.jsonl"))).records
+    assert.deepEqual((await readSitianRecords(join(root, "state.jsonl"))).records
       .filter((record) => record.kind === "host-session"), []);
-    assert.deepEqual(readHistoryRows(root), []);
+    assert.deepEqual(readStateRows(root), []);
     const delivered = (await readFile(deliveredLog, "utf8")).trim().split("\n")
       .map((line) => JSON.parse(line) as { systemPrompt: string; outputSchema: unknown });
     assert.ok(delivered[0]!.systemPrompt.length > 0);
@@ -374,7 +374,7 @@ process.stdout.write(body, () => {
     const cleared = await host.executeTurn({ ...request, continuation: { kind: "initial", prompt: "no-rollout" } });
     assert.equal(cleared.code, 0);
     assert.equal(cleared.knownFailure, undefined);
-    const warnings = (await readSitianRecords(join(root, "log.jsonl"))).records
+    const warnings = (await readSitianRecords(join(root, "state.jsonl"))).records
       .filter((record) => record.kind === "host-session")
       .map((record) => record.payload as { type?: string; nativePath?: string; sessionId?: string });
     const last = warnings.at(-1);
@@ -621,10 +621,10 @@ process.exit(0);
 
 /**
  * Through the production host with the production session-identity authority (no stub): a
- * log.jsonl that cannot be written changes neither the bound thread nor the delivered receipt;
- * a re-asked round starts the CLI again.
+ * state.jsonl that cannot be written fails the turn with the real cause (#1300: the thread
+ * binding lives in that one ledger); a re-asked round starts the CLI again.
  */
-for (const scenario of ["log-unwritable", "re-asked-round"] as const) {
+for (const scenario of ["ledger-unwritable", "re-asked-round"] as const) {
   test(`headless host, production session identity: ${scenario}`, { timeout: 20000 }, async () => {
     const ledger = createTempPackageHomeLedger({ prefix: "ak-run-files-", runName: "run@codex" });
     const root = ledger.runDirectory;
@@ -642,7 +642,7 @@ const events = [
 process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + "\\n");
 `, "utf8");
     await chmod(fakeBin, 0o755);
-    const readOnly = scenario === "log-unwritable" ? "log.jsonl" : undefined;
+    const readOnly = scenario === "ledger-unwritable" ? "state.jsonl" : undefined;
     try {
       if (readOnly !== undefined) {
         await writeFile(join(root, readOnly), "", { flag: "a" });
@@ -687,11 +687,18 @@ process.stdout.write(events.map((event) => JSON.stringify(event)).join("\\n") + 
         runDirectory: root,
       });
       const starts = (await readFile(startsFile, "utf8")).split("\n").filter(Boolean).length;
+      if (scenario === "ledger-unwritable") {
+        assert.equal(result.knownFailure?.cause, "session");
+        assert.equal((result.knownFailure as { identity?: { code?: unknown } }).identity?.code, "EACCES");
+        assert.equal(await sessionIdentity.load(principal), undefined);
+        assert.equal(starts, 1);
+        return;
+      }
       assert.equal(result.knownFailure, undefined);
       assert.equal(result.code, 0);
       assert.equal(await sessionIdentity.load(principal), "thread-1");
-      assert.equal(ingested, scenario === "re-asked-round" ? 2 : 1);
-      assert.equal(starts, scenario === "re-asked-round" ? 2 : 1);
+      assert.equal(ingested, 2);
+      assert.equal(starts, 2);
     } finally {
       ledger.dispose();
     }

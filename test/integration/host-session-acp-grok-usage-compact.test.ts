@@ -42,9 +42,9 @@ function request(runDirectory: string, home: string, model?: { provider?: string
   };
 }
 
-/** The host-session rows the run's single log.jsonl carries. */
+/** The host-session rows the run's single state.jsonl carries. */
 async function hostSessionRecords(runDirectory: string) {
-  const { records } = await readSitianRecords(join(runDirectory, "log.jsonl"));
+  const { records } = await readSitianRecords(join(runDirectory, "state.jsonl"));
   return { records: records.filter((record) => record.kind === "host-session") };
 }
 

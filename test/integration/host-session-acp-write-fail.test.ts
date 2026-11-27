@@ -37,7 +37,7 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    const logPath = join(ledger.runDirectory, "log.jsonl");
+    const logPath = join(ledger.runDirectory, "state.jsonl");
 
     await mkdir(logPath);
     let declared = false;

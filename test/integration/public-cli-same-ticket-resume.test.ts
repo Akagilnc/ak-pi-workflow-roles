@@ -16,12 +16,10 @@
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
-  
-  readHistoryRows,
+  readStateRows,
   statePayloads,
   lockStateRows,
   unlockStateRows,
-  runLogPayloads,
   sessionFaultNotes,
   RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
 } from "../helpers/run-dossier-fixture.ts";
@@ -1143,11 +1141,11 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     (await readdir(coderRunDirectory)).sort(),
     [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES].sort(),
   );
-  // #1299: history keeps only the submission ledger and its progress rows; an accepted
-  // court writes no terminal row.
-  assert.deepEqual(readHistoryRows(coderRunDirectory).map((row) => row.kind)
-    .filter((kind) => !["candidate", "outcome", "sealed", "progress"].includes(String(kind))), []);
-  assert.deepEqual(statePayloads(coderRunDirectory, "terminal"), []);
+  // #1299: a clean accepted court leaves its pages, its submission rows with their progress
+  // rows and the worker gate baseline in the ledger — no terminal row, no diagnostic row.
+  assert.deepEqual(readStateRows(coderRunDirectory).map((row) => row.kind).filter((kind) => ![
+    "invocation", "admitted-request", "run-state", "commit-baseline", "candidate", "outcome", "sealed", "progress",
+  ].includes(String(kind))), []);
   // #1199: session originals stay under the leg (`<run>/session`).
   assert.deepEqual(
     (await readdir(sessionDirectoryOf(coderRunDirectory))).sort(),
@@ -1270,7 +1268,7 @@ test("#840 bounce class 1/2: page write failure after a real bare `ak-role resum
     // The seal lands through the real ledger; the turn wrapper below then makes
     // state.jsonl read-only (an append to an existing file fails on its own mode,
     // a read-only directory would not stop it), so the leg's later page writes are
-    // refused while reads and history.jsonl appends still work. The proof that the
+    // refused while reads still work. The proof that the
     // injection fired is structural, never the diagnostic's wording (#840 bounce
     // class 2): the run-state that never reached terminal and the dossier entries.
     let sealingTurnArmed = false;
@@ -1300,7 +1298,7 @@ test("#840 bounce class 1/2: page write failure after a real bare `ak-role resum
           })(extraArgs, options);
         }
         // Bare resume of the still-open court seals it for the first time. The seal
-        // writes history.jsonl and state.jsonl in the run directory, so the lock that
+        // writes state.jsonl in the run directory, so the lock that
         // makes the later page writes fail is applied by the host wrapper below, after
         // the seal landed. Armed only for this turn.
         sealingTurnArmed = turn === 3;

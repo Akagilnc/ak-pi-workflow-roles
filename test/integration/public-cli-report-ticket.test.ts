@@ -6,8 +6,8 @@
  * Asserts durable placement and typed fields only — never free text / stdout.
  */
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -39,13 +39,15 @@ import {
 } from "../../src/role-run-placement.ts";
 import { resolveHostDossierLandingPath } from "../../src/host-session-record.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
-import { RUN_HISTORY_FILE } from "../../src/run-dossier-files.ts";
+import { RUN_STATE_FILE } from "../../src/run-dossier-files.ts";
 import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts";
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
-  historyPayloads,
+  statePayloads,
   reportedReceipts,
   seedStatePage,
+  stagedProgressLines,
+  RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
 } from "../helpers/run-dossier-fixture.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
 import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
@@ -267,8 +269,8 @@ async function seedUnboundChildWithStaging(input: {
   });
   seedStatePage(childDir, "invocation", { role: "diarist", runId: input.childRunId, ...identity });
   seedStatePage(childDir, "admitted-request", { role: "diarist", runId: input.childRunId, ...identity });
-  await writeFile(
-    join(childDir, RUN_HISTORY_FILE),
+  await appendFile(
+    join(childDir, RUN_STATE_FILE),
     `${JSON.stringify({
       kind: TICKET_PROVENANCE_KIND,
       identity: input.identity,
@@ -559,8 +561,10 @@ test("#1268 unbound submission stays accepted without opening another turn", asy
         const leaf = bound ? ticketLeaf(home, bookKey, TICKET, runId, "reviewer") : unboundLeaf(home, bookKey, runId, "reviewer");
         assert.equal(existsSync(leaf), true);
         assert.equal((readPageSync(leaf, "admitted") ?? {})?.ticketNumber, bound ? TICKET : undefined);
+        // #1300: reported or not, the leg holds its receipts, its session and its one ledger.
+        assert.deepEqual(readdirSync(leaf).sort(), [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES]);
         const subject = join(home, ".ak-roles", "books", bookKey, bound ? String(TICKET) : "unbound");
-        const progress = readTicketProgressLines(subject);
+        const progress = bound ? readTicketProgressLines(subject) : stagedProgressLines(leaf);
         const rows = progress.filter((row) => row.receipt.startsWith(`runs/${formatRunLeaf(runId, "reviewer")}/`));
         assert.equal(rows.length, action === "resubmit" ? 2 : 1);
         // #1201: the terminal reports each receipt it accepted as its progress row names it.
@@ -625,7 +629,6 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
     assert.equal(transportPrompt.includes("--attach"), true);
     assert.notEqual(transportPrompt, instruction);
     const ticketDir = join(home, ".ak-roles", "books", bookKey, String(TICKET));
-    const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
     const fixerLines = readTicketProgressLines(ticketDir).filter((line) => line.seat === "fixer");
     assert.equal(fixerLines.length, 1);
     assert.equal(fixerLines[0]!.instruction, transportPrompt);
@@ -647,10 +650,7 @@ test("#1171 submit with ticketNumber and no report tool: bind as today, no reask
       JSON.parse(await readFile(join(ticketDir, fixerLines[0]!.receipt), "utf8")),
       submit,
     );
-    assert.equal(
-      readTicketProgressLines(unboundDir).some((line) => line.session.includes(runId)),
-      false,
-    );
+    assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
     assert.equal(
       fixerLines[0]!.session,
       `runs/${formatRunLeaf(runId, "fixer")}/session/session.jsonl`,
@@ -718,10 +718,8 @@ test("#1199 public resume relocate: ticket current write fail keeps leg staging 
       assert.equal(existsSync(unboundLeaf(home, bookKey, id, "fixer")), true);
     }
     const unboundDir = join(home, ".ak-roles", "books", bookKey, "unbound");
-    const beforeMove = readTicketProgressLines(unboundDir)
-      .filter((line) => line.session.includes(runId));
-    const beforeStay = readTicketProgressLines(unboundDir)
-      .filter((line) => line.session.includes(stayId));
+    const beforeMove = stagedProgressLines(unboundLeaf(home, bookKey, runId, "fixer"));
+    const beforeStay = stagedProgressLines(unboundLeaf(home, bookKey, stayId, "fixer"));
     assert.ok(beforeMove.length >= 1, "move leg must stage progress before bind");
     assert.ok(beforeStay.length >= 1, "stay leg must stage progress before bind");
     // #1199 R1: staged session + whole receipt JSON must stay reachable after fail.
@@ -764,22 +762,7 @@ test("#1199 public resume relocate: ticket current write fail keeps leg staging 
     const movedLeaf = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
     assert.equal(existsSync(movedLeaf), true, "rename must commit before ticket append");
     assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
-    const stagedProgressPath = join(movedLeaf, "progress.jsonl");
-    assert.equal(
-      existsSync(stagedProgressPath),
-      true,
-      "private progress file must remain when target append fails",
-    );
-    const stagedLines = (await readFile(stagedProgressPath, "utf8"))
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .flatMap((line) => {
-        try {
-          return [JSON.parse(line) as { receipt: string; session: string }];
-        } catch {
-          return [];
-        }
-      });
+    const stagedLines = stagedProgressLines(movedLeaf);
     assert.ok(stagedLines.length >= beforeMove.length, "staging rows survive failed append");
     const stagingReceipts: unknown[] = [];
     for (const row of stagedLines) {
@@ -793,8 +776,7 @@ test("#1199 public resume relocate: ticket current write fail keeps leg staging 
       "failed-leg must retain the seed sealed receipt JSON",
     );
     // Sibling isolation: stay leg untouched whether bind threw or not.
-    const afterStay = readTicketProgressLines(unboundDir)
-      .filter((line) => line.session.includes(stayId));
+    const afterStay = stagedProgressLines(unboundLeaf(home, bookKey, stayId, "fixer"));
     assert.equal(afterStay.length, beforeStay.length);
     for (const row of afterStay) {
       assert.equal(existsSync(join(unboundDir, row.receipt)), true);
@@ -831,7 +813,7 @@ test("#1199 public resume relocate: ticket current write fail keeps leg staging 
       otherSubmit,
     );
     // Staging for the failed bind leg must still be intact after the peer seal.
-    assert.equal(existsSync(stagedProgressPath), true, "peer seal must not drop failed-leg staging");
+    assert.deepEqual(stagedProgressLines(movedLeaf), stagedLines, "peer seal must not drop failed-leg staging");
     for (const row of stagedLines) {
       assert.equal(existsSync(join(ticketSubject, row.receipt)), true, row.receipt);
       assert.equal(existsSync(join(ticketSubject, row.session)), true, row.session);
@@ -862,12 +844,21 @@ test("#1199 public resume relocate: ticket current write fail keeps leg staging 
       captureIo().io,
     );
     assert.equal(rebound.exitCode, 0, `${rebound.terminal?.roleOutcome.kind}`);
-    assert.equal(existsSync(stagedProgressPath), false, "successful publish drops staging");
     const ticketRows = readTicketProgressLines(ticketSubject)
       .filter((line) => line.seat === "fixer");
     assert.ok(ticketRows.some((line) => line.session.includes(otherId)), "peer row remains");
     const relocated = ticketRows.filter((line) => line.session.includes(runId));
     assert.ok(relocated.length >= stagingReceipts.length, "relocated rows cover pre-retry staging");
+    // Round filled at bind, and no receipt published twice across the failed bind and its retry.
+    assert.deepEqual(relocated.map((row) => row.round), relocated.map((_, index) => String(index + 2)));
+    assert.equal(new Set(relocated.map((row) => row.receipt)).size, relocated.length);
+    // A published row is staged no longer: the retry's own seal and filing after it
+    // carry each receipt's round into the leg's ledger once.
+    assert.deepEqual(
+      statePayloads<{ receipt: string; round: string }>(movedLeaf, "progress")
+        .filter((row) => row.round !== "").map(({ receipt, round }) => [receipt, round]),
+      relocated.map(({ receipt, round }) => [receipt, round]),
+    );
     for (const row of relocated) {
       assert.equal(existsSync(join(ticketSubject, row.receipt)), true, row.receipt);
       assert.equal(existsSync(join(ticketSubject, row.session)), true, row.session);

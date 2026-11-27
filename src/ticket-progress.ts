@@ -5,7 +5,7 @@
  *
  * Originals stay in the leg directory (owner 14b58f6c / a8d2e72d):
  * `runs/<leg>/receipts/<n>.json`, `runs/<leg>/session/<原件>`.
- * Unbound legs stage rows in `progress.jsonl` (round empty); bind renames the
+ * Unbound legs stage rows in their own ledger (round empty); bind renames the
  * whole leg, then this module fills rounds and appends ticket current.jsonl.
  * Round authority is progress lines only — no receipt-filename counting,
  * occupancy placeholders, or claim-retry loops. Reviewer dual-lens series
@@ -18,7 +18,6 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
@@ -33,7 +32,7 @@ import {
   sessionFileOf,
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
-import { readPageSync } from "./run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync } from "./run-dossier.ts";
 import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { sitianReport } from "./sitian-facade.ts";
@@ -42,7 +41,6 @@ import { errnoCode, errorText, isRecord } from "./unknown-value.ts";
 
 const CURRENT_FILENAME = "current.jsonl" as const;
 const RECEIPTS_DIRNAME = "receipts" as const;
-const LEG_PROGRESS_FILENAME = "progress.jsonl" as const;
 
 /** One accepted-receipt progress row on the ticket (or unbound leg) subject. */
 export type TicketProgressLine = {
@@ -108,22 +106,9 @@ function readProgressFile(path: string): TicketProgressLine[] {
   return lines;
 }
 
-/**
- * Read progress rows under a subject.
- * Ticket: append-only `current.jsonl`.
- * Unbound: each leg's `runs/<leaf>/progress.jsonl` (no shared file).
- */
-export function readTicketProgressLines(subjectDirectory: string): TicketProgressLine[] {
-  if (basename(subjectDirectory) === "unbound") {
-    const runsDir = join(subjectDirectory, "runs");
-    if (!existsSync(runsDir)) return [];
-    const out: TicketProgressLine[] = [];
-    for (const name of readdirSync(runsDir).sort()) {
-      out.push(...readProgressFile(join(runsDir, name, LEG_PROGRESS_FILENAME)));
-    }
-    return out;
-  }
-  return readProgressFile(join(subjectDirectory, CURRENT_FILENAME));
+/** Progress rows of a ticket: its append-only `current.jsonl`. */
+export function readTicketProgressLines(ticketDirectory: string): TicketProgressLine[] {
+  return readProgressFile(join(ticketDirectory, CURRENT_FILENAME));
 }
 
 function roundBaseNumber(round: string): number {
@@ -293,6 +278,8 @@ export type ProgressRowCall = {
  * that prints the terminal — settlement reads round and receipt beside the
  * sealed payload, and never picks rows out of current.jsonl after the turn.
  * A seal names its tool call; a publish (round filled at bind) names the receipt.
+ * An unbound leg's row (round empty) carries the whole line: this is its staging
+ * until bind publishes it.
  */
 function carryProgressRow(
   runDirectory: string,
@@ -300,7 +287,8 @@ function carryProgressRow(
   call?: ProgressRowCall,
 ): void {
   const runId = runIdFromRunDirectory(runDirectory);
-  if (runId === undefined) return;
+  // The row is an unbound leg's only staging: a leg it cannot be written for fails loudly.
+  if (runId === undefined) throw new Error(`progress row needs a run leaf <runId>@<role>: ${runDirectory}`);
   sitianReport({
     level: "event",
     kind: PROGRESS_RECORD_KIND,
@@ -310,6 +298,7 @@ function carryProgressRow(
       ...(call === undefined ? {} : { toolCallId: call.toolCallId }),
       receipt: line.receipt,
       round: line.round,
+      ...(line.round === "" ? { line } : {}),
     },
     source: "ticket-progress",
     sessionParent: sessionFileOf(runDirectory),
@@ -332,9 +321,13 @@ function progressSessionAbsolute(runDirectory: string, context: HostContext): st
   return sessionFileOf(runDirectory);
 }
 
-function lensFromRunDirectory(runDirectory: string, role: string): string | undefined {
+function lensFromRunDirectory(
+  runDirectory: string,
+  role: string,
+  rows: readonly Record<string, unknown>[],
+): string | undefined {
   if (role !== "reviewer") return undefined;
-  const lens = readPageSync(runDirectory, "admitted")?.lens;
+  const lens = pageFromRows(rows, "admitted", runDirectory)?.lens;
   return lens === "completeness" || lens === "correctness" ? lens : undefined;
 }
 
@@ -394,28 +387,21 @@ export function landTicketProgress(input: {
   const subjectDirectory = subjectDirectoryOfRun(runDirectory);
   if (subjectDirectory === undefined) return undefined;
 
-  const lens = (
-    input.lens === "completeness" || input.lens === "correctness"
-      ? input.lens
-      : lensFromRunDirectory(runDirectory, input.role)
-  );
-
   const unbound = basename(subjectDirectory) === "unbound";
-  const progressPath = unbound
-    ? join(runDirectory, LEG_PROGRESS_FILENAME)
-    : join(subjectDirectory, CURRENT_FILENAME);
-
-  // #1199 R1: bound leg with leftover progress.jsonl must publish before this
-  // seal takes the next ticket round — optional ticketNumber must not be required.
+  // Unbound: round stays empty until whole-leg bind publishes into ticket current,
+  // so the leg's ledger is not read here.
+  let round = "";
   if (!unbound) {
-    relocateTicketProgressForLeg({ runDirectory });
+    // A filed leg's ledger is read once for both the lens and the staged rows.
+    const rows = readStateControlRowsSync(runDirectory);
+    const lens = input.lens === "completeness" || input.lens === "correctness"
+      ? input.lens
+      : lensFromRunDirectory(runDirectory, input.role, rows);
+    // #1199 R1: bound leg with staged rows left must publish before this seal
+    // takes the next ticket round — optional ticketNumber must not be required.
+    relocateTicketProgressForLeg({ runDirectory }, undefined, rows);
+    round = nextRoundFromLines(readTicketProgressLines(subjectDirectory), input.role, lens);
   }
-
-  const existing = unbound
-    ? readProgressFile(progressPath)
-    : readTicketProgressLines(subjectDirectory);
-  // Unbound: round stays empty until whole-leg bind publishes into ticket current.
-  const round = unbound ? "" : nextRoundFromLines(existing, input.role, lens);
 
   const sessionRelative = input.sessionFile === undefined
     ? ""
@@ -436,8 +422,7 @@ export function landTicketProgress(input: {
     session: sessionRelative,
   };
 
-  mkdirSync(dirname(progressPath), { recursive: true });
-  appendFileSync(progressPath, `${JSON.stringify(line)}\n`, "utf8");
+  if (!unbound) appendFileSync(join(subjectDirectory, CURRENT_FILENAME), `${JSON.stringify(line)}\n`, "utf8");
   carryProgressRow(runDirectory, line, input.call);
   // HEAD capture fault: keep the raw cause on stderr. Do not invent a second
   // dossier custom-frame channel beside post-admission's existing retain path.
@@ -449,47 +434,49 @@ export function landTicketProgress(input: {
 
 /**
  * After whole-leg rename (or retry when already under the ticket): fill rounds
- * on staged `progress.jsonl`, append ticket `current.jsonl`, then drop staging.
+ * on the rows staged in the leg's ledger and append ticket `current.jsonl`. A
+ * staged row is one whose receipt has no later row with its round filled.
  * Receipt / session / head / instruction keep seal-time values and relative
  * paths — no copy, delete-source, or rewrite of relative pointers.
  *
  * Unbound staging leaves `round` empty; publish takes the leg's sealed lens from
- * the admitted page (`lensFromRunDirectory`), never from receipt prose.
+ * the admitted page (`lensFromRunDirectory`), never from receipt prose. A caller
+ * that holds the leg's ledger rows with nothing written since passes them.
  */
 export function relocateTicketProgressForLeg(input: {
   readonly runDirectory: string;
-}, publishedRounds?: Map<string, string>): void {
+}, publishedRounds?: Map<string, string>, heldRows?: readonly Record<string, unknown>[]): void {
   if (isUnboundRunDirectory(input.runDirectory)) return;
 
   const subjectDirectory = subjectDirectoryOfRun(input.runDirectory);
   if (subjectDirectory === undefined) return;
 
-  const stagedPath = join(input.runDirectory, LEG_PROGRESS_FILENAME);
-  const mine = readProgressFile(stagedPath);
-  if (mine.length === 0) {
-    if (existsSync(stagedPath)) {
-      rmSync(stagedPath, { force: true });
-    }
-    return;
+  const rows = heldRows ?? readStateControlRowsSync(input.runDirectory);
+  const staged = new Map<string, TicketProgressLine>();
+  for (const { kind, payload } of rows) {
+    if (kind !== PROGRESS_RECORD_KIND || !isRecord(payload) || typeof payload.receipt !== "string") continue;
+    if (payload.round === "" && isRecord(payload.line)) staged.set(payload.receipt, payload.line as TicketProgressLine);
+    else staged.delete(payload.receipt);
   }
+  if (staged.size === 0) return;
+  const mine = [...staged.values()];
 
   const ticketLines = readTicketProgressLines(subjectDirectory);
   const priorCount = ticketLines.length;
-  // Receipt path is the seal identity. Append-then-unlink partial success must
+  // Receipt path is the seal identity. Append-then-carry partial success must
   // not reassign rounds or re-append the same originals on re-entry (#1199 F2).
   const published = new Map(ticketLines.map(line => [line.receipt, line]));
-  for (const line of mine) {
-    if (published.has(line.receipt)) continue;
+  const pending = mine.filter(line => !published.has(line.receipt));
+  if (pending.length > 0) {
     // Current unbound staging publishes empty rounds; lens comes only from this
-    // leg's admitted page. No legacy staged-round mirror-suffix branch.
-    const lens = lensFromRunDirectory(input.runDirectory, line.seat);
-    const round = nextRoundFromLines(ticketLines, line.seat, lens);
-    const moved = { ...line, round };
-    published.set(line.receipt, moved);
-    ticketLines.push(moved);
-  }
-
-  if (ticketLines.length > priorCount) {
+    // leg's admitted page, taken once: a leg has one seat. No legacy staged-round
+    // mirror-suffix branch.
+    const lens = lensFromRunDirectory(input.runDirectory, pending[0]!.seat, rows);
+    for (const line of pending) {
+      const moved = { ...line, round: nextRoundFromLines(ticketLines, line.seat, lens) };
+      published.set(line.receipt, moved);
+      ticketLines.push(moved);
+    }
     const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
     mkdirSync(dirname(newCurrent), { recursive: true });
     appendFileSync(newCurrent, `${ticketLines.slice(priorCount).map(line => JSON.stringify(line)).join("\n")}\n`, "utf8");
@@ -497,8 +484,7 @@ export function relocateTicketProgressForLeg(input: {
   // The ticket row is committed even if later cleanup or rendering fails.
   const filed = mine.map(({ receipt }) => published.get(receipt)!);
   if (publishedRounds) for (const line of filed) publishedRounds.set(join(subjectDirectory, line.receipt), line.round);
-  // Retire staging only after every exact ticket row (also on retry) has a
-  // durable handoff. Replaying that metadata never creates a new round.
+  // The round-filled row retires the staging one, only after its ticket row
+  // (also on retry) is durable. Replaying it never creates a new round.
   for (const line of filed) carryProgressRow(input.runDirectory, line);
-  rmSync(stagedPath, { force: true });
 }

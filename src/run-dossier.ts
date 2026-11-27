@@ -1,23 +1,22 @@
 /**
- * The per-leg dossier files (docs/dossier-topology.md, #1161): `history.jsonl` (the
- * submission ledger), `state.jsonl` (the four whole pages) and `log.jsonl` (the rest),
- * all append-only and written through the sitian appender, and the one host original.
+ * The per-leg ledger (docs/dossier-topology.md): `state.jsonl`, append-only and
+ * written through the sitian appender.
  *
  * Facts are rows. The four pages only the public call knows — identity
  * (`invocation`), admission (`admitted-request`), lifecycle (`run-state`) and the
- * terminal — are each rewritten whole by appending one `state.jsonl` row whose
- * payload is that page; the last row of a kind is the current page.
+ * terminal — are each rewritten whole by appending one row whose payload is that
+ * page; the last row of a kind is the current page.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { sessionFileOf } from "./role-run-placement.ts";
-import { RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE, OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
+import { RUN_STATE_FILE, OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
 import { appendSitianRecord } from "./sitian-appender.ts";
 import { parseSitianRecordText } from "./sitian-reader.ts";
 import { isMissingPathError, isRecord } from "./unknown-value.ts";
 
-export { RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE };
+export { RUN_STATE_FILE };
 
 /** The whole-page sections a public call rewrites by appending one `state.jsonl` row. */
 export type CurrentSection = "invocation" | "admitted" | "runState" | "terminal";
@@ -93,7 +92,7 @@ export function pageFromRows(
 }
 
 /**
- * Latest officer-pointer payload per officer from already-decoded history rows.
+ * Latest officer-pointer payload per officer from already-decoded ledger rows.
  * Sole reducer for the "last booking wins per officer" rule on archived rows
  * (#753 / #1161; historical decode only).
  * A booked officer-pointer row with a non-object payload or non-string officer is

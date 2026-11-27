@@ -11,7 +11,7 @@ import {
   parseRunLeaf,
   sessionDirectoryOf,
 } from "./role-run-placement.ts";
-import { RUN_HISTORY_FILE, RUN_HISTORY_KINDS, RUN_LOG_FILE, RUN_STATE_FILE, RUN_STATE_KINDS } from "./run-dossier-files.ts";
+import { RUN_STATE_FILE } from "./run-dossier-files.ts";
 import { ticketNumberFromSitianSubject } from "./run-ticket-number.ts";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -115,10 +115,10 @@ export function resolveSitianRecordPathInLedger(
     sessionDir = paths.sessionDir;
     recordFile = paths.recordFile;
   } else if (category === "ticket-provenance" && input.runDirectory !== undefined) {
-    // True-unbound diary staging: the run's history volume (#1161). Never a
-    // top-level run/records.jsonl — that leaf is only the ticket-root diary.
+    // True-unbound diary staging: the run's own ledger. Never a top-level
+    // run/records.jsonl — that leaf is only the ticket-root diary.
     sessionDir = input.runDirectory;
-    recordFile = join(sessionDir, RUN_HISTORY_FILE);
+    recordFile = join(sessionDir, RUN_STATE_FILE);
   } else {
     if (
       input.sessionParent === undefined
@@ -130,9 +130,9 @@ export function resolveSitianRecordPathInLedger(
     const sessionParentDir = dirname(input.sessionParent);
     const runDirectory = runDirectoryOwningSessionParent(sessionParentDir);
     if (runDirectory !== undefined) {
-      // A role run's own session: every record kind shares the run's one log (#1161).
+      // A role run's own session: every record kind shares the run's one ledger (#1300).
       sessionDir = runDirectory;
-      recordFile = join(runDirectory, RUN_HISTORY_KINDS.has(input.kind) ? RUN_HISTORY_FILE : RUN_STATE_KINDS.has(input.kind) ? RUN_STATE_FILE : RUN_LOG_FILE);
+      recordFile = join(runDirectory, RUN_STATE_FILE);
     } else {
       sessionDir = sitianVolumeDirectory(sessionParentDir, category);
       recordFile = sitianVolumeRecordsFile(sessionDir);

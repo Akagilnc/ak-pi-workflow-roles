@@ -1,8 +1,7 @@
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { isRecord } from "./unknown-value.ts";
-import { latestOfficerPointersFromRecords, RUN_HISTORY_FILE } from "./run-dossier.ts";
+import { latestOfficerPointersFromRecords, readStateControlRowsSync } from "./run-dossier.ts";
 import { OFFICER_POINTER_RECORD_KIND } from "./run-dossier-files.ts";
-import { readSitianRecords } from "./sitian-facade.ts";
 
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
 import { resolveLiveRunDirectoryPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
@@ -26,7 +25,6 @@ export type DirectOfficerRunPointer = {
   readonly runDirectory?: string;
 };
 
-/** History record kind of a booked officer pointer (appender routes it to history.jsonl). */
 export { OFFICER_POINTER_RECORD_KIND };
 
 /** Decode one archived pointer; relocates session/run paths when the leaf moved. */
@@ -70,18 +68,12 @@ export async function resolveOfficerPointer(
 }
 
 /**
- * The latest pointer booked per officer on one run, as stored. History absent → empty.
- * Canonical malformed diagnostics are not discarded: a damaged officer source must
- * not wash into lawful zero rounds (#1161 O1).
+ * The latest pointer booked per officer on one run, as stored. Ledger absent → empty.
+ * A damaged ledger refuses (`readStateControlRowsSync`): it must not wash into
+ * lawful zero rounds (#1161 O1).
  */
 export async function readBookedOfficerPointers(parentRunDirectory: string): Promise<Readonly<Record<string, unknown>>> {
-  const { records, diagnostics } = await readSitianRecords(join(parentRunDirectory, RUN_HISTORY_FILE));
-  if (diagnostics.length > 0) {
-    throw new Error(
-      `${RUN_HISTORY_FILE} has ${diagnostics.length} malformed row(s); officer pointers unreadable: ${parentRunDirectory}`,
-    );
-  }
-  return latestOfficerPointersFromRecords(records);
+  return latestOfficerPointersFromRecords(readStateControlRowsSync(parentRunDirectory));
 }
 
 /** Every pointer booked on one run, in officer-name order. No pointers → []. */

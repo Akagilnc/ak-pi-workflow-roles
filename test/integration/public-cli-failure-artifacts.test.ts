@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockStateRows, unlockStateRows } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockStateRows, unlockStateRows } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -72,7 +72,7 @@ test("malformed session JSONL stays no_receipt and notes the read; it does not i
     const runDirectory = join(
       home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
     );
-    const artifactNote = runLogPayloads<{ diagnostic?: unknown }>(runDirectory, "post-admission-diagnostic")
+    const artifactNote = statePayloads<{ diagnostic?: unknown }>(runDirectory, "post-admission-diagnostic")
       .some((body) => typeof body.diagnostic === "string" && body.diagnostic !== "");
     const sessionNote = sessionFaultNotes(sessionFileOf(runDirectory))
       .some((note) => typeof note.diagnostic === "string" && note.diagnostic !== "");
@@ -487,7 +487,7 @@ test("#953 no_receipt replaces the owned terminal; sibling, history and session 
       })}\n`,
       "utf8",
     );
-    const ledgerPath = join(runDirectory, "history.jsonl");
+    const ledgerPath = join(runDirectory, "state.jsonl");
     await writeFile(
       ledgerPath,
       `${JSON.stringify({ kind: "submission", runId, payload: { judgeStatus: "continue" } })}\n`,
@@ -540,7 +540,7 @@ test("#953 no_receipt replaces the owned terminal; sibling, history and session 
       assert.equal(sibling.body.diagnostic, "sibling-owned");
     }
 
-    // history.jsonl also carries the facts settlement appends; the planted row is
+    // state.jsonl also carries the facts settlement appends; the planted row is
     // the one non-sitian line, and it must survive byte-for-byte in meaning.
     const ledgerEntry = (await readFile(ledgerPath, "utf8"))
       .split("\n")

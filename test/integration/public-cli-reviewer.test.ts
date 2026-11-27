@@ -659,7 +659,7 @@ test("explicit single-lens hard-stop refused still lands mismatched axis key", a
       home, ".ak-roles", "books", bookKey, "1171", "runs",
       "run-cli-reviewer-hard-stop@reviewer",
     );
-    // The refusing payload itself is what history.jsonl kept.
+    // The refusing payload itself is what state.jsonl kept.
     const refusedDurable =
       (submittedParams(refusedRunDirectory) as ReadonlyArray<Record<string, unknown>>)
         .find((p) => p.status === "refused") ?? {};

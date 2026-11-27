@@ -3,6 +3,7 @@
  * assert on the rows as a reader outside the package sees them. Pages are read
  * through src/run-dossier.ts `readPageSync`; seeds append raw rows.
  */
+import type { TicketProgressLine } from "../../src/ticket-progress.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -68,17 +69,7 @@ function readRunJsonlRows(runDirectory: string, fileName: string): Record<string
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-/** Every line of `<run>/history.jsonl`, parsed raw (`[]` when absent). */
-export function readHistoryRows(runDirectory: string): Record<string, unknown>[] {
-  return readRunJsonlRows(runDirectory, "history.jsonl");
-}
-
-/** The `payload` of every history.jsonl row of one kind, in append order. */
-export function historyPayloads<T = Record<string, unknown>>(runDirectory: string, kind: string): T[] {
-  return readHistoryRows(runDirectory).filter((row) => row.kind === kind).map((row) => row.payload as T);
-}
-
-/** Every line of `<run>/state.jsonl` (the four whole-page fact rows), parsed raw (`[]` when absent). */
+/** Every line of `<run>/state.jsonl` (the leg's one ledger), parsed raw (`[]` when absent). */
 export function readStateRows(runDirectory: string): Record<string, unknown>[] {
   return readRunJsonlRows(runDirectory, "state.jsonl");
 }
@@ -88,14 +79,9 @@ export function statePayloads<T = Record<string, unknown>>(runDirectory: string,
   return readStateRows(runDirectory).filter((row) => row.kind === kind).map((row) => row.payload as T);
 }
 
-/**
- * Every line of `<run>/log.jsonl`, parsed raw (`[]` when absent), optionally
- * only rows of one `kind` (dispatch-exception, post-admission-diagnostic,
- * resume-diagnostic, host-session, ...). Each row's content is its `payload`.
- */
-export function readRunLogRows(runDirectory: string, kind?: string): Record<string, unknown>[] {
-  const rows = readRunJsonlRows(runDirectory, "log.jsonl");
-  return kind === undefined ? rows : rows.filter((row) => row.kind === kind);
+/** The progress lines an unbound leg has staged in its ledger, in seal order. */
+export function stagedProgressLines(runDirectory: string): TicketProgressLine[] {
+  return statePayloads<{ line?: TicketProgressLine }>(runDirectory, "progress").flatMap(({ line }) => line ? [line] : []);
 }
 
 /**
@@ -105,11 +91,6 @@ export function readRunLogRows(runDirectory: string, kind?: string): Record<stri
 export function seedHostSessionId(runDirectory: string, host: string, sessionId: unknown): void {
   mkdirSync(runDirectory, { recursive: true });
   reportRunRecord(runDirectory, "host-session-id", { host, sessionId }, "test-fixture");
-}
-
-/** The `payload` of every log row of one kind, in append order. */
-export function runLogPayloads<T = Record<string, unknown>>(runDirectory: string, kind: string): T[] {
-  return readRunLogRows(runDirectory, kind).map((row) => row.payload as T);
 }
 
 /**
@@ -125,7 +106,7 @@ export function sessionFaultNotes(sessionFile: string): { diagnostic?: unknown }
 
 /** The originals named by this leg's seals, in order. */
 export function submittedParams(runDirectory: string): unknown[] {
-  return historyPayloads<{ receipt: string }>(runDirectory, "sealed").map(({ receipt }) =>
+  return statePayloads<{ receipt: string }>(runDirectory, "sealed").map(({ receipt }) =>
     JSON.parse(readFileSync(join(runDirectory, "../..", receipt), "utf8")));
 }
 
@@ -159,26 +140,22 @@ export function reportedReceipts(terminal: {
 
 /**
  * #1161 / #1165 / #1199: bound-at-rest leaf names after accepted seal
- * (dossier + leg-local `receipts/` / `session/`). Sole list of the four;
- * allowlist below spreads this and adds unbound / seat-only leaves.
+ * (#1300: receipts, session, the one ledger). Sole list of the three;
+ * allowlist below spreads this and adds the seat-only leaf.
  */
 export const RUN_DIRECTORY_BOUND_AT_REST_ENTRIES = [
-  "history.jsonl",
   "receipts",
   "session",
   "state.jsonl",
 ] as const;
 
 /**
- * Leaf names a run directory may hold at rest: bound four plus `log.jsonl` (only
- * once the leg has a log row), unbound staging `progress.jsonl` and seat input
+ * Leaf names a run directory may hold at rest: the three plus seat input
  * `merger-input.json`.
  * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
  */
 export const RUN_DIRECTORY_ALLOWED_ENTRIES = [
   ...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
-  "log.jsonl",
-  "progress.jsonl",
   "merger-input.json",
 ] as const;
 
