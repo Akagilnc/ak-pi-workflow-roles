@@ -174,17 +174,25 @@ test("migration-derived ticket page places a run into the ticket view without bo
   });
 });
 
-test("subject-tree ticket runs are indexed (not only flat legacy runs)", async () => {
+test("subject-tree runs file under the directory they sit in and show their latest identity row", async () => {
   await withBookDir(async (ledgerDir) => {
     const runFolder = "01jsub@judge";
-    await seedBookRun(ledgerDir, runFolder, {
-      ticketNumber: 582,
-      subject: "582",
-    });
+    // The page names no ticket; the leg sits under 582. Its session still carries
+    // the previous turn's model and level; the identity row names this turn's.
+    const runDir = await seedBookRun(ledgerDir, runFolder, { subject: "582" });
+    await writeFile(join(runDir, "session", "session.jsonl"), [
+      { type: "session", timestamp: "2026-08-07T00:00:00.000Z" },
+      { type: "model_change", provider: "old-provider", modelId: "old-model" },
+      { type: "thinking_level_change", thinkingLevel: "low" },
+    ].map((row) => `${JSON.stringify(row)}\n`).join(""), "utf8");
+    seedStatePage(runDir, "invocation", { role: "judge", runId: runFolder, provider: "new-provider", model: "new-model" });
+    // An unbound leg whose page still names 582 stays unbound.
+    await seedBookRun(ledgerDir, "01jstale@judge", { subject: "unbound", ticketNumber: 582 });
     const index = await buildTicketTrajectoryBookIndex(ledgerDir);
-    assert.equal(index.runsByTicket.get(582)?.length, 1);
-    assert.equal(index.runsByTicket.get(582)?.[0]?.ledgerCoord, `582/runs/${runFolder}`);
+    assert.deepEqual(index.runsByTicket.get(582)?.map((binding) => binding.ledgerCoord), [`582/runs/${runFolder}`]);
+    assert.deepEqual(index.unboundRuns.map((binding) => binding.runFolder), ["01jstale@judge"]);
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 582, index);
-    assert.equal(runs.some((run) => run.runId === runFolder), true);
+    assert.deepEqual(runs.map(({ runId, provider, model, thinking }) => ({ runId, provider, model, thinking })),
+      [{ runId: runFolder, provider: "new-provider", model: "new-model", thinking: "" }]);
   });
 });

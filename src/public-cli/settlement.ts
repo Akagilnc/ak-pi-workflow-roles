@@ -7,8 +7,7 @@ import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
-import { sessionFileOf, subjectDirectoryOfRun } from "../role-run-placement.ts";
-import { parseTicketNumber } from "../run-ticket-number.ts";
+import { filedTicketNumber, sessionFileOf, subjectDirectoryOfRun } from "../role-run-placement.ts";
 
 import {
   TERMINAL_COURT_ATTEMPT_FIELD,
@@ -239,7 +238,7 @@ export function filedIdentity(
 ): Pick<TerminalResult, "ticket" | "receipts"> {
   const subjectDirectory = subjectDirectoryOfRun(runDirectory);
   if (subjectDirectory === undefined) return {};
-  const ticket = parseTicketNumber(basename(subjectDirectory));
+  const ticket = filedTicketNumber(runDirectory);
   return {
     ...(ticket === undefined ? {} : { ticket }),
     ...(filed.length === 0 ? {} : {
