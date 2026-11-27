@@ -420,12 +420,13 @@ async function parseRunDirectory(
     ...(invocation?.role !== undefined ? { invocationRole: invocation.role } : {}),
   });
 
-  // An identity row that names a model is this leg's current identity, taken as a
-  // set: an earlier turn's session never fills a level the row leaves out. The
-  // session's mechanical fields stand in only for legs without one.
-  const { model = "", provider = "", thinking = "" } = invocation?.model !== undefined
-    ? invocation
-    : extractModelFields(rows);
+  // Session mechanical fields win; the invocation section fills gaps only.
+  let { model, provider, thinking } = extractModelFields(rows);
+  if (invocation) {
+    if (!thinking && invocation.thinking) thinking = invocation.thinking;
+    if (!provider && invocation.provider) provider = invocation.provider;
+    if (!model && invocation.model) model = invocation.model;
+  }
 
   return {
     runId,

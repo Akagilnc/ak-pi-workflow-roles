@@ -174,18 +174,17 @@ test("migration-derived ticket page places a run into the ticket view without bo
   });
 });
 
-test("subject-tree runs file under the directory they sit in and show their latest identity row", async () => {
+test("subject-tree runs file under the directory they sit in; the session's model shows and the identity row fills what it lacks", async () => {
   await withBookDir(async (ledgerDir) => {
     const runFolder = "01jsub@judge";
-    // The page names no ticket; the leg sits under 582. Its session still carries
-    // the previous turn's model and level; the identity row names this turn's.
+    // The page names no ticket; the leg sits under 582. Its session carries the model
+    // that ran its turns and no level; a later identity row names another model and a level.
     const runDir = await seedBookRun(ledgerDir, runFolder, { subject: "582" });
     await writeFile(join(runDir, "session", "session.jsonl"), [
       { type: "session", timestamp: "2026-08-07T00:00:00.000Z" },
-      { type: "model_change", provider: "old-provider", modelId: "old-model" },
-      { type: "thinking_level_change", thinkingLevel: "low" },
+      { type: "model_change", provider: "ran-provider", modelId: "ran-model" },
     ].map((row) => `${JSON.stringify(row)}\n`).join(""), "utf8");
-    seedStatePage(runDir, "invocation", { role: "judge", runId: runFolder, provider: "new-provider", model: "new-model" });
+    seedStatePage(runDir, "invocation", { role: "judge", runId: runFolder, provider: "row-provider", model: "row-model", thinking: "high" });
     // An unbound leg whose page still names 582 stays unbound.
     await seedBookRun(ledgerDir, "01jstale@judge", { subject: "unbound", ticketNumber: 582 });
     const index = await buildTicketTrajectoryBookIndex(ledgerDir);
@@ -193,6 +192,6 @@ test("subject-tree runs file under the directory they sit in and show their late
     assert.deepEqual(index.unboundRuns.map((binding) => binding.runFolder), ["01jstale@judge"]);
     const runs = await loadTicketTrajectoryRuns(ledgerDir, 582, index);
     assert.deepEqual(runs.map(({ runId, provider, model, thinking }) => ({ runId, provider, model, thinking })),
-      [{ runId: runFolder, provider: "new-provider", model: "new-model", thinking: "" }]);
+      [{ runId: runFolder, provider: "ran-provider", model: "ran-model", thinking: "high" }]);
   });
 });
