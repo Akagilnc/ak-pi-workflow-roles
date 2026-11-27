@@ -1209,7 +1209,7 @@ export async function runAkRole(
     // legs filed under the ticket are in it.
     if (parsed.command === "resume") {
       const address = parseResumeAddress(parsed.args);
-      const { runDirectory } = locateTicketLeg(
+      const runDirectory = locateTicketLeg(
         activationBookDirectory(
           resolveActivationLedgerHome(home),
           resolveBookKeyFromGit(env.cwd ?? process.cwd()),

@@ -1539,12 +1539,11 @@ export async function admitPublicRole(
       let sourceRun = override?.resolvedSourceRun;
       if (sourceRun === undefined) {
         try {
-          const { filed: _named, ...located } = await resolveNotarySourceRunLocator({
+          sourceRun = await resolveNotarySourceRunLocator({
             projectRoot,
             sourceRun: parsed.sourceRun ?? "",
             home: shared.home,
           });
-          sourceRun = located;
         } catch (error) {
           if (error instanceof NotarySourceRunError) {
             throw new CliUsageError(error.message, { cause: error });

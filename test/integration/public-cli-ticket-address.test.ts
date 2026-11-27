@@ -299,23 +299,23 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     assert.equal(turns.at(-1)?.role, "judge");
     assert.equal(join(ticketDirectory, "runs", turns.at(-1)!.leg), legB);
 
-    // Leg A files a later receipt; a named round still means that round's receipt —
-    // the pin and the officer's progress row, and the first sentence when the caller
-    // wrote none. A caller's dispatch passes as-is (ADR 0085).
+    // Leg A files a later receipt. A round in the locator only finds the leg; a direct
+    // call reviews that leg's latest arrival — the pin and the officer's progress row.
+    // A caller's dispatch passes as-is (ADR 0085).
     await call(["resume", String(TICKET), "judge#1"], () => ruling({ later: true }));
     const forOf = (seat: string) => readTicketProgressLines(ticketDirectory).filter((row) => row.seat === seat).at(-1)?.for;
     const pinned = () => readCurrentSection(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted").auditedReceipt;
     await boundTo(`${TICKET}:judge#1`);
-    assert.equal(pinned(), "1.json");
-    assert.equal(forOf("notary"), "judge#1");
-    const dispatch = "审 judge#1 那份。";
+    assert.equal(pinned(), "2.json");
+    assert.equal(forOf("notary"), "judge#3");
+    const dispatch = "审 judge 最新那份。";
     const inspected = await call(["new", "inspector", "--model", SEAT_MODEL, "--source-run", `${TICKET}:judge#1`, dispatch],
       () => ({ status: "converged" }));
     assert.equal(inspected.exitCode, 0);
     assert.equal(turns.at(-1)!.prompt, dispatch);
-    assert.equal(forOf("inspector"), "judge#1");
+    assert.equal(forOf("inspector"), "judge#3");
 
-    // Unnamed round, unreadable ledger: the leg's files still locate its latest arrival,
+    // A path locator, unreadable ledger: the leg's files still locate its latest arrival,
     // an original never accepted, so it is the one under review and borrows no round.
     await writeFile(join(legA, "receipts", "3.json"), JSON.stringify(ruling({ arrivedOnly: true })));
     await chmod(join(legA, "history.jsonl"), 0o000);

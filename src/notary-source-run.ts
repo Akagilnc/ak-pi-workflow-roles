@@ -13,7 +13,6 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
-import type { TerminalReceiptRef } from "./public-cli/terminal.ts";
 import { resolveLiveRunDirectoryPath, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { parseRunLeaf } from "./role-run-placement.ts";
 import { locateTicketLeg, parseTicketLegLocator } from "./ticket-address.ts";
@@ -82,7 +81,7 @@ export async function resolveNotarySourceRunLocator(options: {
   readonly projectRoot: string;
   readonly sourceRun: string;
   readonly home?: string;
-}): Promise<NotarySourceRunLocator & { readonly filed?: TerminalReceiptRef }> {
+}): Promise<NotarySourceRunLocator> {
   const raw = options.sourceRun.trim();
   if (raw === "") {
     throw new NotarySourceRunError("notary --source-run requires a run locator");
@@ -94,10 +93,9 @@ export async function resolveNotarySourceRunLocator(options: {
   const bookRunsRoot = join(bookDirectory, "runs");
 
   let candidate: string;
-  let filed: TerminalReceiptRef | undefined;
   const address = parseTicketLegLocator(raw);
   if (address !== undefined) {
-    ({ runDirectory: candidate, filed } = locateTicketLeg(bookDirectory, address));
+    candidate = locateTicketLeg(bookDirectory, address);
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
     const identity = parseRunLeaf(basename(candidate));
@@ -155,8 +153,6 @@ export async function resolveNotarySourceRunLocator(options: {
     runDirectory: real,
     runId: identity.runId,
     role: identity.role,
-    // The caller named this round's receipt; it is the one under review.
-    ...(filed && { filed }),
   };
 }
 
