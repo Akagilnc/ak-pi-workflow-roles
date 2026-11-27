@@ -287,7 +287,8 @@ function carryProgressRow(
   call?: ProgressRowCall,
 ): void {
   const runId = runIdFromRunDirectory(runDirectory);
-  if (runId === undefined) return;
+  // The row is an unbound leg's only staging: a leg it cannot be written for fails loudly.
+  if (runId === undefined) throw new Error(`progress row needs a run leaf <runId>@<role>: ${runDirectory}`);
   sitianReport({
     level: "event",
     kind: PROGRESS_RECORD_KIND,
@@ -387,18 +388,19 @@ export function landTicketProgress(input: {
   const subjectDirectory = subjectDirectoryOfRun(runDirectory);
   if (subjectDirectory === undefined) return undefined;
 
+  const unbound = basename(subjectDirectory) === "unbound";
+  // A filed leg's ledger is read once here for both the lens and the staged rows.
+  const rows = unbound ? undefined : readStateControlRowsSync(runDirectory);
   const lens = (
     input.lens === "completeness" || input.lens === "correctness"
       ? input.lens
-      : lensFromRunDirectory(runDirectory, input.role)
+      : lensFromRunDirectory(runDirectory, input.role, rows)
   );
-
-  const unbound = basename(subjectDirectory) === "unbound";
 
   // #1199 R1: bound leg with staged rows left must publish before this seal
   // takes the next ticket round — optional ticketNumber must not be required.
   if (!unbound) {
-    relocateTicketProgressForLeg({ runDirectory });
+    relocateTicketProgressForLeg({ runDirectory }, undefined, rows);
   }
 
   // Unbound: round stays empty until whole-leg bind publishes into ticket current.
@@ -441,17 +443,18 @@ export function landTicketProgress(input: {
  * paths — no copy, delete-source, or rewrite of relative pointers.
  *
  * Unbound staging leaves `round` empty; publish takes the leg's sealed lens from
- * the admitted page (`lensFromRunDirectory`), never from receipt prose.
+ * the admitted page (`lensFromRunDirectory`), never from receipt prose. A caller
+ * that holds the leg's ledger rows with nothing written since passes them.
  */
 export function relocateTicketProgressForLeg(input: {
   readonly runDirectory: string;
-}, publishedRounds?: Map<string, string>): void {
+}, publishedRounds?: Map<string, string>, heldRows?: readonly Record<string, unknown>[]): void {
   if (isUnboundRunDirectory(input.runDirectory)) return;
 
   const subjectDirectory = subjectDirectoryOfRun(input.runDirectory);
   if (subjectDirectory === undefined) return;
 
-  const rows = readStateControlRowsSync(input.runDirectory);
+  const rows = heldRows ?? readStateControlRowsSync(input.runDirectory);
   const staged = new Map<string, TicketProgressLine>();
   for (const { kind, payload } of rows) {
     if (kind !== PROGRESS_RECORD_KIND || !isRecord(payload) || typeof payload.receipt !== "string") continue;
