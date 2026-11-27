@@ -178,14 +178,16 @@ export function writeSectionSync(
 /**
  * Let the caller keep its field rules for one existing section: the update
  * receives the last row's page. `undefined` means no change. A missing section
- * is an error: admission writes it first.
+ * is an error: admission writes it first. A caller that already holds the leg's
+ * control rows, with nothing written since, passes them.
  */
 export function updateSectionSync(
   runDirectory: string,
   section: CurrentSection,
   update: (current: Record<string, unknown>) => Record<string, unknown> | undefined,
+  rows: readonly Record<string, unknown>[] = readStateControlRowsSync(runDirectory),
 ): void {
-  const current = readPageSync(runDirectory, section);
+  const current = pageFromRows(rows, section, runDirectory);
   if (current === undefined) {
     throw new Error(`${RUN_STATE_FILE} has no ${PAGE_ROW_KIND[section]} row: ${runDirectory}`);
   }

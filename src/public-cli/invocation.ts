@@ -55,7 +55,7 @@ import {
 import {
   rewriteAdmittedRoleRunPage,
 } from "../role-run-relocation.ts";
-import { readPageSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -533,9 +533,10 @@ export function persistAdmittedAuditedLeg(
 export async function bindAdmittedTicketNumber(
   admitted: AdmittedRoleInvocation,
   ticketNumber: number,
+  rows?: readonly Record<string, unknown>[],
 ): Promise<void> {
   if (admitted.ticketNumber === ticketNumber) return;
-  await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber);
+  await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber, rows);
   (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
 }
 
@@ -583,8 +584,13 @@ async function relocateRegisteredChildDiarists(input: {
   readonly projectRoot: string;
   readonly ledgerHome: string;
   readonly authority: DurablePrincipalAuthority;
+  readonly parentRows: readonly Record<string, unknown>[] | undefined;
 }): Promise<void> {
-  const childRunIds = readPageSync(input.parentRunDirectory, "admitted")?.childDiaristRunIds;
+  const childRunIds = pageFromRows(
+    input.parentRows ?? readStateControlRowsSync(input.parentRunDirectory),
+    "admitted",
+    input.parentRunDirectory,
+  )?.childDiaristRunIds;
   for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
     if (typeof childRunId !== "string") continue;
     const childTarget = roleRunPlacement(input.ledgerHome, {
@@ -627,12 +633,16 @@ async function relocateRegisteredChildDiarists(input: {
   }
 }
 
-/** File a role run under its latest typed ticket identity. */
+/**
+ * File a role run under its latest typed ticket identity. A caller that holds
+ * the leg's control rows with nothing written since passes them as `rows`.
+ */
 export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
   publishedRounds?: Map<string, string>,
+  rows?: readonly Record<string, unknown>[],
 ): Promise<RunDirectoryRelocation | undefined> {
   if (admitted.ticketNumber === undefined) return undefined;
 
@@ -649,6 +659,7 @@ export async function relocateAdmittedRunToTicket(
         projectRoot: admitted.projectRoot,
         ledgerHome,
         authority,
+        parentRows: rows,
       });
     }
     return undefined;
@@ -673,6 +684,7 @@ export async function relocateAdmittedRunToTicket(
       projectRoot: admitted.projectRoot,
       ledgerHome,
       authority,
+      parentRows: rows,
     });
   }
 
@@ -729,6 +741,7 @@ export async function recordChildDiaristRun(
 export async function bindTicketNumberOnRunDirectory(
   runDirectory: string,
   ticketNumber: number,
+  rows?: readonly Record<string, unknown>[],
 ): Promise<void> {
   requireSafePositiveTicketNumber(
     ticketNumber,
@@ -741,7 +754,7 @@ export async function bindTicketNumberOnRunDirectory(
       return undefined;
     }
     return { ...admitted, ticketNumber };
-  });
+  }, rows);
   if (unchanged) return;
   await mergeInvocationIdentityPage(runDirectory, { ticketNumber });
 }
