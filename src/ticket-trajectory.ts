@@ -757,7 +757,7 @@ export async function loadTicketTrajectoryRuns(
     runs.push(parsed);
   }
 
-  // Book runs (flat + subject-tree) bound by typed invocation ticketNumber.
+  // Book runs filed under this ticket: by directory, or a flat leg by its page.
   const flatBindings = index.runsByTicket.get(issueNumber) ?? [];
   for (const binding of flatBindings) {
     const resolvedRunDir = resolve(binding.runDir);

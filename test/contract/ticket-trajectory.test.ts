@@ -92,7 +92,7 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   assert.equal(coder["data-model"], "gpt-5.6-sol");
   assert.equal(coder["data-thinking"], "low");
 
-  // Fixer leg carries real model/provider/thinking from session mechanical fields.
+  // Fixer leg carries real model/provider/thinking from its identity row.
   const fixer = runById(html, "fixer-apply-001@ak-roles-127");
   assert.equal(fixer["data-station"], "fixer");
   assert.equal(fixer["data-provider"], "xai");
