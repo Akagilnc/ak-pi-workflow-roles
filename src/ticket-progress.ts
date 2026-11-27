@@ -32,7 +32,7 @@ import {
   sessionFileOf,
   subjectDirectoryOfRun,
 } from "./role-run-placement.ts";
-import { pageFromRows, readPageSync, readStateControlRowsSync } from "./run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync } from "./run-dossier.ts";
 import { PROGRESS_RECORD_KIND } from "./run-dossier-files.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { sitianReport } from "./sitian-facade.ts";
@@ -324,11 +324,10 @@ function progressSessionAbsolute(runDirectory: string, context: HostContext): st
 function lensFromRunDirectory(
   runDirectory: string,
   role: string,
-  rows?: readonly Record<string, unknown>[],
+  rows: readonly Record<string, unknown>[],
 ): string | undefined {
   if (role !== "reviewer") return undefined;
-  const admitted = rows === undefined ? readPageSync(runDirectory, "admitted") : pageFromRows(rows, "admitted", runDirectory);
-  const lens = admitted?.lens;
+  const lens = pageFromRows(rows, "admitted", runDirectory)?.lens;
   return lens === "completeness" || lens === "correctness" ? lens : undefined;
 }
 
@@ -389,22 +388,20 @@ export function landTicketProgress(input: {
   if (subjectDirectory === undefined) return undefined;
 
   const unbound = basename(subjectDirectory) === "unbound";
-  // A filed leg's ledger is read once here for both the lens and the staged rows.
-  const rows = unbound ? undefined : readStateControlRowsSync(runDirectory);
-  const lens = (
-    input.lens === "completeness" || input.lens === "correctness"
-      ? input.lens
-      : lensFromRunDirectory(runDirectory, input.role, rows)
-  );
-
-  // #1199 R1: bound leg with staged rows left must publish before this seal
-  // takes the next ticket round — optional ticketNumber must not be required.
+  // Unbound: round stays empty until whole-leg bind publishes into ticket current,
+  // so the leg's ledger is not read here.
+  let round = "";
   if (!unbound) {
+    // A filed leg's ledger is read once for both the staged rows and the lens.
+    const rows = readStateControlRowsSync(runDirectory);
+    // #1199 R1: bound leg with staged rows left must publish before this seal
+    // takes the next ticket round — optional ticketNumber must not be required.
     relocateTicketProgressForLeg({ runDirectory }, undefined, rows);
+    const lens = input.lens === "completeness" || input.lens === "correctness"
+      ? input.lens
+      : lensFromRunDirectory(runDirectory, input.role, rows);
+    round = nextRoundFromLines(readTicketProgressLines(subjectDirectory), input.role, lens);
   }
-
-  // Unbound: round stays empty until whole-leg bind publishes into ticket current.
-  const round = unbound ? "" : nextRoundFromLines(readTicketProgressLines(subjectDirectory), input.role, lens);
 
   const sessionRelative = input.sessionFile === undefined
     ? ""
