@@ -173,15 +173,6 @@ export function createSubmissionLedgerHost(
     return { level: "event" as const, subject, source: "role-runtime", cwd: context.cwd,
       ...(sessionParent === undefined ? {} : { sessionParent }), ...(home === undefined ? {} : { home }) };
   }
-  host.on("turn_end", async (event, context) => {
-    try {
-      const calls = event.calls.map(({ toolCallId: id, toolName: name }) => ({ id, name }));
-      if (calls.length) {
-        const origin = source(context);
-        sitianReport({ ...origin, kind: "roundContext", payload: { type: "roundContext", attemptId: origin.subject.attemptId, calls } });
-      }
-    } catch (error) { failInfrastructure(error, context); }
-  });
   return { ...host, registerTool(tool) {
     const role = outputTools.get(tool.name);
     if (role === undefined) return host.registerTool(tool);

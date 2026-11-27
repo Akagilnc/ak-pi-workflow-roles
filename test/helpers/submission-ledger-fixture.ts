@@ -128,20 +128,13 @@ export async function driveLedgerProducer(input: {
         },
         abort() {},
       } as HostContext;
-    // #836: recording happens on execute from LLM params; turn_end only books roundContext.
+    // #836: recording happens on execute from LLM params.
     // Fixture details stand in for the model tool-call arguments.
     try {
       await registered.execute(input.toolCallId, input.details, undefined, undefined, context);
     } catch (error) {
       if (!Object.hasOwn(input, "executeError")) throw error;
       // Non-sealed path: candidate + outcome already on the ledger; swallow for fixtures.
-    }
-    const turnEnd = handlers.get("turn_end");
-    if (turnEnd !== undefined) {
-      await turnEnd({
-        turnIndex: 0,
-        calls: [{ toolCallId: input.toolCallId, toolName }],
-      }, context);
     }
   return runDirectory;
 }

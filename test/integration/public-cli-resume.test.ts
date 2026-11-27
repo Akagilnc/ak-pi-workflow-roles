@@ -1,4 +1,5 @@
-import { historyPayloads, statePayloads, readCurrentJson, runLogPayloads, readCurrentSection, sessionFaultNotes, seedCurrentSection, terminalBodyAt, lockCurrentJson, unlockCurrentJson, clearCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, runLogPayloads, sessionFaultNotes, seedStatePage, terminalBodyAt, lockStateRows, unlockStateRows, clearStateRows } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 
@@ -10,9 +11,9 @@ import { readTicketProgressLines } from "../../src/ticket-progress.ts";
  * resume does not take a package writer-lease gate before host CLI resume.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { loadPublicCliConfig } from "../../src/public-cli/config.ts";
 import { test } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
@@ -59,7 +60,7 @@ const roleTurnHostFromLegacyPiRunner: typeof rawRoleTurnHostFromLegacyPiRunner =
  * Shared plant: seal accepted judge output, optionally block report publication.
  * #953 clears conventional faces (including directory plants) before rewrite,
  * so report.json-as-directory no longer reaches writeFile. When blocking,
- * lock current.json to 0o444 — the terminal write gets EACCES.
+ * lock state.jsonl to 0o444 — the run-state write gets EACCES.
  * Throw/ledger poison cases pass blockReportPublication:false. A later
  * read or write fault is a note beside the host terminal.
  */
@@ -110,15 +111,15 @@ function sealedPublicationBlockedHost(
       };
     },
   });
-  // The seal is on the record once the turn returns; the leg's terminal write is
-  // next. Locking current.json (an in-place rewrite fails on the file's own mode)
+  // The seal is on the record once the turn returns; the leg's run-state write is
+  // next. Locking state.jsonl (the append fails on the file's own mode)
   // refuses that write while reads and history.jsonl appends still work. The fault
   // passes once a gate officer's turn begins, so the gates' own lawful pointer
   // writes into the judge's dossier are not caught by it.
   const restoreWritable = async () => {
     for (const file of lockedCurrents) {
       try {
-        unlockCurrentJson(dirname(file));
+        unlockStateRows(file);
       } catch {
         // cleanup best-effort
       }
@@ -129,9 +130,8 @@ function sealedPublicationBlockedHost(
       if (request.activation.role !== "judge") await restoreWritable();
       const out = await inner.executeTurn(request);
       if (blockReportPublication && request.activation.role === "judge") {
-        const current = join(request.runDirectory, "current.json");
-        lockCurrentJson(dirname(current));
-        lockedCurrents.add(current);
+        lockStateRows(request.runDirectory);
+        lockedCurrents.add(request.runDirectory);
       }
       return out;
     },
@@ -243,8 +243,7 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
-          // Bind before the publication-lock fault so relocation does not
-          // race the locked current.json plant.
+          // Bind before the state.jsonl lock so relocation does not race it.
           boundTicketNumber: 1171,
           io,
           roleTurnHost: host,
@@ -267,14 +266,9 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
       assert.ok(typeof note === "string" && note !== "");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
-      const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
-        .map((payload) => payload.outcome?.kind);
-      assert.deepEqual(historyOutcomes(), [], "a seal is not copied into settlement history");
-
-      // The accepted terminal FACT is recorded as a history row; only its rendering
-      // was refused (the cleanup note above proves the refusal fired).
-      const recordedTerminals = statePayloads<{ face?: string }>(runDirectory, "terminal");
-      assert.deepEqual(recordedTerminals.map((terminal) => terminal.face), ["report"]);
+      const terminalFaces = () => statePayloads<{ face?: string }>(runDirectory, "terminal").map((row) => row.face);
+      // An accepted seal writes no terminal row; the refused write was the run-state.
+      assert.deepEqual(terminalFaces(), []);
 
       await restoreWritable();
 
@@ -307,11 +301,11 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.equal(rebuilt.exitCode, 0);
       assert.equal(rebuilt.terminal!.roleOutcome.kind, "no_receipt");
       assert.deepEqual(rebuilt.terminal!.submissions, [{ status: "converged", note: "lawful despite later publication failure" }]);
-      assert.deepEqual(historyOutcomes(), ["no_receipt"], "bare resume does not record a duplicate seal");
+      assert.deepEqual(terminalFaces(), ["no_receipt"], "bare resume does not record a duplicate seal");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(historyOutcomes(), ["no_receipt"], "re-reading the latest seal must not append another attempt");
+      assert.deepEqual(terminalFaces(), ["no_receipt"], "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreWritable();
     }
@@ -430,11 +424,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
         "1171", "runs",
         `${runId}@judge`,
       );
-      // Structured fault marker: current.unreadable names the authority error.
-      // Once-declare across render/resume is proven by one-shot public-entry
-      // mutation (quality-law), not by counting free-text stderr diagnostics.
-      const current = readCurrentJson(runDirectory) as { unreadable?: Record<string, string> };
-      assert.deepEqual(current.unreadable, { "history.jsonl": "EISDIR" });
       // An unreadable seal ledger is not proof of an empty court. Keep the original and the actual I/O error.
       assert.equal(dispatches(), 1);
       assert.equal(result.exitCode, 1);
@@ -473,13 +462,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "failure");
       assert.equal(resumeResult.terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
       assert.deepEqual(resumeResult.terminal.submissions, result.terminal!.submissions);
-      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
-      assert.ok(typeof note === "string" && note !== "");
-      assert.deepEqual(
-        (readCurrentJson(runDirectory) as { unreadable?: Record<string, string> }).unreadable,
-        { "history.jsonl": "EISDIR" },
-      );
-
     } finally {
       await restoreWritable();
     }
@@ -553,10 +535,10 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
     // Simulate a resumable run-state written before sessionFile was persisted.
-    const legacyState = readCurrentSection(runDirectory, "runState");
+    const legacyState = (readPageSync(runDirectory, "runState") ?? {});
     delete legacyState.sessionFile;
-    seedCurrentSection(runDirectory, "runState", legacyState);
-    const admittedBefore = readCurrentSection(runDirectory, "admitted") as {
+    seedStatePage(runDirectory, "run-state", legacyState);
+    const admittedBefore = (readPageSync(runDirectory, "admitted") ?? {}) as {
       instruction: string;
       attachments: Array<{ path: string }>;
     };
@@ -624,7 +606,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
 
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
-    const admittedAfter = readCurrentSection(liveRunDirectory, "admitted") as { attachments: Array<{ path: string }> };
+    const admittedAfter = (readPageSync(liveRunDirectory, "admitted") ?? {}) as { attachments: Array<{ path: string }> };
     assert.equal(admittedAfter.attachments[0]!.path, attachmentSrc);
 
     const durable = await readRoleRunState(liveRunDirectory, piDurablePrincipalAuthority);
@@ -1009,7 +991,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
       ?? join(home, ".ak-roles", "books", bookKey, "1171", "runs", `${runId}@judge`);
     const lease = await acquireRunWriterLease(runDirectory);
     let dispatches = 0;
-    let savedRunState = "";
+    let poisoned = "";
     await withPrimaryAwareCleanup(
       async () => {
         const { io: capturedIo } = captureIo();
@@ -1018,8 +1000,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
           stderr: () => {
             // The failed parent write has already been observed. Restore the
             // source run before the mandatory Notary/Auditor summons reads it.
-            rmSync(join(runDirectory, "current.json"), { recursive: true });
-            writeFileSync(join(runDirectory, "current.json"), savedRunState);
+            if (poisoned !== "") unlockStateRows(poisoned);
             throw new Error("stderr sink failed");
           },
         };
@@ -1064,10 +1045,8 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
               })).executeTurn(request);
               if (request.activation.role === "judge") {
                 // Poison the live admitted path (may already be ticket-bound).
-                const statePath = join(request.runDirectory, "current.json");
-                savedRunState = await readFile(statePath, "utf8");
-                await rm(statePath, { force: true });
-                await mkdir(statePath);
+                poisoned = request.runDirectory;
+                lockStateRows(poisoned);
               }
               return result;
             },
@@ -1428,7 +1407,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     const sessionDirectory = sessionDirectoryOf(runDirectory);
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await mkdir(sessionDirectory, { recursive: true });
-    seedCurrentSection(runDirectory, "admitted", {
+    seedStatePage(runDirectory, "admitted-request", {
       role: "judge",
       instruction: "x",
       instructionEmpty: false,
@@ -1445,7 +1424,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
       runDirectory,
       principal: fixturePrincipal(sessionDirectory, sessionFile),
     }, piDurablePrincipalAuthority);
-    seedCurrentSection(runDirectory, "invocation", {});
+    seedStatePage(runDirectory, "invocation", {});
     // Principal path is bound but the file itself is missing — not a package gate (#1091).
 
     const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
@@ -1476,7 +1455,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     assert.equal(dispatches, 1);
     assert.notEqual(resumed.exitCode, 0);
     // Host-dispatched failure: this call's roleOutcome structured reason ↔ terminal body (#1161 T2).
-    const noted = terminalBodyAt(join(runDirectory, "current.json"), "error") as {
+    const noted = terminalBodyAt(join(runDirectory, "state.jsonl"), "error") as {
       diagnostic?: unknown;
       details?: { exitCode?: unknown };
     };
@@ -1688,8 +1667,8 @@ test("public resume failures persist structured diagnostics", async () => {
           ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
           ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
         };
-        seedCurrentSection(runDirectory, "invocation", durable);
-        seedCurrentSection(runDirectory, "admitted", durable);
+        seedStatePage(runDirectory, "invocation", durable);
+        seedStatePage(runDirectory, "admitted-request", durable);
         await markRunAdmitted({
           role: input.role,
           runId: input.runId,
@@ -1758,7 +1737,7 @@ test("public resume failures persist structured diagnostics", async () => {
           outcome?.kind === "failure" && typeof outcome.diagnostic === "string" && outcome.diagnostic.length > 0,
           true,
         );
-        const record = terminalBodyAt(join(runDirectory, "current.json"), "error") as {
+        const record = terminalBodyAt(join(runDirectory, "state.jsonl"), "error") as {
           kind?: unknown;
           runId?: unknown;
           diagnostic?: unknown;
@@ -1811,13 +1790,13 @@ test("public resume failures persist structured diagnostics", async () => {
         projectRoot: project,
         ticketNumber: 2003,
       });
-      seedCurrentSection(corruptRunState.runDirectory, "runState", {});
+      seedStatePage(corruptRunState.runDirectory, "run-state", {});
       await assertPreHostResumeDiagnostic(
         corruptRunState.runDirectory,
         "1058-corrupt-run-state",
         ["resume", "--model", "test/caller-seat:high", "2003", "secretariat"],
       );
-      assert.deepEqual(readCurrentSection(corruptRunState.runDirectory, "runState"), {});
+      assert.deepEqual((readPageSync(corruptRunState.runDirectory, "runState") ?? {}), {});
 
       const seatSelectionFailure = await seed({
         runId: "1058-seat-selection-failure",
@@ -1878,7 +1857,7 @@ test("public resume failures persist structured diagnostics", async () => {
         projectRoot: project, ticketNumber: 2006, correlationId: "1058-parent-dispatch-failure",
       });
       // The parent leg never had an admitted page: no row, no rendered section.
-      clearCurrentSection(parent.runDirectory, "admitted");
+      clearStateRows(parent.runDirectory, "admitted-request");
       let childDispatches = 0;
       let parentDispatches = 0;
       const acceptedChildHost = roleTurnHostFromLegacyPiRunner({
@@ -1933,7 +1912,7 @@ test("public resume failures persist structured diagnostics", async () => {
         0,
         `${parentResume.stderr.join("")} ${JSON.stringify(parentResult)}`,
       );
-      assert.equal(readCurrentJson(parent.runDirectory).admitted, undefined);
+      assert.deepEqual(statePayloads(parent.runDirectory, "admitted-request"), []);
       // Parent preload fails before this parent's host turn — this-call append only.
       const parentDiagnostics = runLogPayloads(parent.runDirectory, "resume-diagnostic") as Array<{
         runId?: unknown;

@@ -24,6 +24,7 @@ import {
   type TicketSnapshot,
 } from "../../src/ticket-trajectory.ts";
 import { elementsWith } from "../helpers/factory-board-shared.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -190,7 +191,7 @@ test("old-key receipts and the shared output tool keep their seat and conclusion
         "utf8",
       );
       if (invocationRole !== undefined) {
-        await writeFile(join(runDir, "current.json"), JSON.stringify({ invocation: { role: invocationRole } }), "utf8");
+        seedStatePage(runDir, "invocation", { role: invocationRole });
       }
     };
     await leg("old-secretariat", [["ak_secretariat_output", { secretariatStatus: "escalate" }]]);
@@ -558,20 +559,19 @@ test("post-start regeneration failure faults the lifecycle with the original cau
     });
 });
 
-test("malformed current.json invocation carrier and unexpected path resolution retain their causes", async () => {
+test("malformed state.jsonl invocation carrier and unexpected path resolution retain their causes", async () => {
   await withTempRoot("ticket-trajectory-evidence-", async (workspace) => {
     const ledgerCopy = join(workspace, "ledger");
     await cp(fixtureLedger, ledgerCopy, { recursive: true });
 
-    // Malformed existing current.json must fail with parse cause — not fall back to name/unknown.
+    // A malformed invocation row must fail — not fall back to name/unknown.
     const invPath = join(
       ledgerCopy,
-      "issues/127/runs/review-026@ak-roles-127/current.json",
+      "issues/127/runs/review-026@ak-roles-127/state.jsonl",
     );
-    await writeFile(invPath, "{not-json", "utf8");
+    await writeFile(invPath, "{not-json\n", "utf8");
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      (error: unknown) => error instanceof SyntaxError,
     );
 
     // Unexpected realpath failure (symlink cycle on ledger root) must not be

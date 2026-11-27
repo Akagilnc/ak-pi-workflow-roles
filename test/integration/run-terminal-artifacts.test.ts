@@ -1,5 +1,5 @@
 /**
- * Reader face for the leg's terminal: the `terminal` section of current.json
+ * Reader face for the leg's terminal: the last `terminal` row of state.jsonl
  * (#1161). Seeded raw, the way an outside writer would leave it; read through
  * readRunTerminal. #953 failure-over-success currentness (a later write replaces
  * an earlier one) is covered at the real settlement seam in
@@ -10,7 +10,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 import { withTempRoot } from "../helpers/environment-fixtures.ts";
-import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 
@@ -33,9 +33,9 @@ test("the terminal is read per run directory: absent until written, each face pr
     await mkdir(dirA, { recursive: true });
     await mkdir(dirB, { recursive: true });
 
-    // No current.json at all, and a current.json with no terminal section, are both absent.
+    // No state.jsonl at all, and a state.jsonl with no terminal row, are both absent.
     assert.deepEqual(readRunTerminal(dirA), { status: "absent" });
-    seedCurrentSection(dirA, "invocation", { role: "coder", runId: runA });
+    seedStatePage(dirA, "invocation", { role: "coder", runId: runA });
     assert.deepEqual(readRunTerminal(dirA), { status: "absent" });
 
     // A failure terminal on A is read as A's, and B stays absent.
@@ -44,8 +44,8 @@ test("the terminal is read per run directory: absent until written, each face pr
     assert.deepEqual(readRunTerminal(dirA), { status: "present", face: "error", body: errorBody });
     assert.deepEqual(readRunTerminal(dirB), { status: "absent" }, "a sibling run's terminal must not bind to another run");
 
-    // Each face reads back as written; the last write wins (no clearing logic).
-    // Report outcomes keep payloads (or attemptHistoryIdentity) — a gap is unreadable (#1161 R2-gap).
+    // Each face reads back as written; the last write wins (no clearing logic). A report
+    // face exists only in books written before #1299.
     const reportBody = {
       role: "coder",
       runId: runB,
@@ -61,12 +61,12 @@ test("the terminal is read per run directory: absent until written, each face pr
   });
 });
 
-test("a terminal section without a known face, a typed object body or a producer role is unreadable; a damaged current.json is not swallowed", async () => {
+test("a terminal section without a known face, a typed object body or a producer role is unreadable; a damaged state.jsonl is not swallowed", async () => {
   await withTempRunsRoot(async (runsRoot) => {
     const dir = join(runsRoot, "019ff000-7a03-7000-8000-0000000007a3@coder");
     await mkdir(dir, { recursive: true });
     const unreadable = (face: string, body: unknown) => {
-      seedCurrentSection(dir, "terminal", { face, at: "2026-08-01T00:00:00.000Z", body });
+      seedStatePage(dir, "terminal", { face, at: "2026-08-01T00:00:00.000Z", body });
       return readRunTerminal(dir);
     };
     for (const [face, body] of [
@@ -74,8 +74,6 @@ test("a terminal section without a known face, a typed object body or a producer
       ["report", "not an object"],
       ["report", null],
       ["report", ["role"]],
-      // Accepted report with neither payloads nor attemptHistoryIdentity is a reader gap.
-      ["report", { role: "coder", outcome: { kind: "accepted", role: "coder" } }],
       ["error", { kind: "error" }],
       ["error", { role: "  " }],
       ["no_receipt", { role: 7 }],
@@ -84,7 +82,7 @@ test("a terminal section without a known face, a typed object body or a producer
       assert.equal(read.status, "unreadable", `${face} ${JSON.stringify(body)}`);
       if (read.status === "unreadable") assert.ok(read.reason.trim().length > 0);
     }
-    await writeFile(join(dir, "current.json"), "{ not json", "utf8");
+    await writeFile(join(dir, "state.jsonl"), "{ not json\n", "utf8");
     assert.throws(() => readRunTerminal(dir));
   });
 });

@@ -11,7 +11,8 @@
  * must equal the delivery requests actually issued.
  */
 import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
-import { readCurrentSection, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
+import { seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { runDirectoryFromSessionDirectory } from "../../src/role-run-placement.ts";
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
@@ -215,7 +216,7 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
       run.seatsDispatched.some((role) => role !== "judge"),
       `催交得卷后必须进入审核席；只见 ${JSON.stringify(run.seatsDispatched)}`,
     );
-    const runState = readCurrentSection(run.runDirectory!, "runState") as { state: string };
+    const runState = (readPageSync(run.runDirectory!, "runState") ?? {}) as { state: string };
     assert.equal(runState.state, "terminal");
     // Structured ledger surface for this public催交 case (kinds/contents).
     // Same-case base/HEAD per-kind对照 is a one-shot probe, not a second local
@@ -309,7 +310,7 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
     assert.ok(runDirectorySeen !== undefined);
     const liveDirectory =
       (await findRunDirectoryById(home, "1132-countersign-seal")) ?? runDirectorySeen!;
-    const runState = readCurrentSection(liveDirectory, "runState") as { state: string };
+    const runState = (readPageSync(liveDirectory, "runState") ?? {}) as { state: string };
     assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
   });
 });
@@ -533,7 +534,7 @@ test("#1132: a failing催交 turn records the host failure and leaves the run ou
     )?.failedAttempts;
     assert.ok((failedAttempts?.length ?? 0) >= 1);
     assert.ok(run.runDirectory !== undefined);
-    const runState = readCurrentSection(run.runDirectory, "runState") as { state: string };
+    const runState = (readPageSync(run.runDirectory, "runState") ?? {}) as { state: string };
     assert.notEqual(runState.state, "running");
   });
 });
@@ -910,7 +911,11 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
     // Syntax damage fails closed for every control-plane page read, so
     // markRunTerminal cannot flip runState (best-effort note beside the failure
     // terminal — same persistence disposition as main). Do not pretend terminal.
-    const runState = readCurrentSection(runDirectory!, "runState") as { state?: string };
+    // The file as it sits on disk: every line but the planted one is a row.
+    const runState = (await readFile(join(runDirectory!, "state.jsonl"), "utf8")).split("\n")
+      .filter((line) => line !== "" && line !== "not JSON")
+      .map((line) => JSON.parse(line) as { kind?: string; payload?: { state?: string } })
+      .filter((row) => row.kind === "run-state").at(-1)!.payload!;
     assert.equal(runState.state, "running");
   });
 });

@@ -5,10 +5,11 @@
  * - 给事中交卷票号或起居郎交卷票号（各自独立调用）
  * - --source-run admitted form (notary / auditor)
  * - already-bound resume
- * Asserts typed ticketNumber on the current.json admitted + invocation sections only
+ * Asserts typed ticketNumber on the admitted + invocation pages only
  * when a typed source provided it.
  */
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -146,15 +147,15 @@ async function assertDurableTicket(
   runDirectory: string,
   expected: number,
 ): Promise<void> {
-  const admitted = readCurrentSection(runDirectory, "admitted") as { ticketNumber?: number };
-  const invocation = readCurrentSection(runDirectory, "invocation") as { ticketNumber?: number };
+  const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as { ticketNumber?: number };
+  const invocation = (readPageSync(runDirectory, "invocation") ?? {}) as { ticketNumber?: number };
   assert.equal(admitted.ticketNumber, expected);
   assert.equal(invocation.ticketNumber, expected);
 }
 
 async function assertDurableUnbound(runDirectory: string): Promise<void> {
-  const admitted = readCurrentSection(runDirectory, "admitted") as { ticketNumber?: number };
-  const invocation = readCurrentSection(runDirectory, "invocation") as { ticketNumber?: number };
+  const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as { ticketNumber?: number };
+  const invocation = (readPageSync(runDirectory, "invocation") ?? {}) as { ticketNumber?: number };
   assert.equal(admitted.ticketNumber, undefined);
   assert.equal(invocation.ticketNumber, undefined);
 }
@@ -394,7 +395,7 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
-    seedCurrentSection(sourceRunPath, "admitted", {
+    seedStatePage(sourceRunPath, "admitted-request", {
       role: CANONICAL_SOURCE_ROLE,
       runId: CANONICAL_SOURCE_RUN_ID,
       ticketNumber: 582,

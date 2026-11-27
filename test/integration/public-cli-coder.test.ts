@@ -1,11 +1,12 @@
-import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { submittedParams } from "../helpers/run-dossier-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -22,7 +23,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "vitest";
 
 import { sessionDirectoryOf } from "../../src/role-run-placement.ts";
@@ -284,14 +285,8 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     assert.equal(result.terminal!.roleOutcome.role, "coder");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
     assert.deepEqual(result.terminal!.submissions, [receipt]);
-    const report = result.terminal!.artifacts.find((a) => a.kind === "report");
-    assert.ok(report);
-    const reportBody = terminalBodyAt(report.path, "report") as {
-      outcome?: { payloads?: unknown };
-    };
-    // The submitted words live in history.jsonl; the terminal carries only the verdict.
-    assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
-    assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
+    // The report the caller opens is the receipt as submitted (#1299).
+    assert.deepEqual(reportedReceipts(result.terminal!), [receipt]);
   });
 });
 
@@ -437,7 +432,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           resolveBookKeyFromGit(project),
           "unbound", "runs",
           "run-cli-coder-plan@coder",
-          "current.json",
+          "state.jsonl",
         ),
       );
     }
@@ -556,7 +551,7 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
       `${runId}@coder`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
-    const admitted = readCurrentSection(runDirectory, "admitted") as {
+    const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as {
       phase: string; role: string; ticketNumber?: number;
     };
     assert.equal(admitted.role, "coder");
@@ -699,7 +694,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(captured!.includes("--thinking"), false);
       // invocation evidence: model identity is the override; thinking stays absent.
       const bookKey = resolveBookKeyFromGit(project);
-      const invocation = readCurrentSection(
+      const invocation = (readPageSync(
         join(
           home,
           ".ak-roles",
@@ -709,7 +704,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           "run-cli-coder-bare-model@coder",
         ),
         "invocation",
-      );
+      ) ?? {});
       // invocation evidence records the effective provider/model; thinking stays absent for bare model.
       assert.equal(invocation.provider, "kimi-coding");
       assert.equal(invocation.model, "k3-256k");
@@ -764,7 +759,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(captured![captured!.indexOf("--thinking") + 1], "high");
       // invocation evidence records provider/model and the supplied thinking level.
       const bookKey = resolveBookKeyFromGit(project);
-      const invocation = readCurrentSection(
+      const invocation = (readPageSync(
         join(
           home,
           ".ak-roles",
@@ -774,7 +769,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
           "run-cli-coder-thinking-suffix@coder",
         ),
         "invocation",
-      );
+      ) ?? {});
       assert.equal(invocation.provider, "openai-codex");
       assert.equal(invocation.model, "gpt-5.6-luna");
       assert.equal(invocation.thinking, "high");

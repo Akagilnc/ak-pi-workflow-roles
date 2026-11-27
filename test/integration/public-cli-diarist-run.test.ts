@@ -3,8 +3,8 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
-import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-import { historyPayloads, submittedParams, readCurrentJson, readCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { submittedParams, statePayloads, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -1742,7 +1742,7 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
       const { rows: submissions } = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
       assert.equal((readReceipt(submissions.at(-1)!) as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
-      const admitted = readCurrentSection(runDir, "admitted");
+      const admitted = (readPageSync(runDir, "admitted") ?? {});
       assert.equal(admitted.ticketNumber, TICKET);
     });
   }
@@ -1841,30 +1841,24 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
-      readCurrentJson(ticketPlacement.runDirectory).runState !== undefined,
+      statePayloads(ticketPlacement.runDirectory, "run-state").length > 0,
       true,
       `failure run must relocate under ticket with durable state at ${ticketPlacement.runDirectory}`,
     );
     assert.equal(
-      readCurrentJson(unboundPlacement.runDirectory).runState !== undefined,
+      statePayloads(unboundPlacement.runDirectory, "run-state").length > 0,
       false,
       "unbound must not keep the durable runState section after relocate",
     );
 
-    // Relocation keeps both attempts in the package ledger, not the host original.
-    const relocatedSessionFile = sessionFileOf(ticketPlacement.runDirectory);
-    const hostRows = (await readFile(relocatedSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
-    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
-    const attemptHistory = historyPayloads<{
-      type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
-    }>(ticketPlacement.runDirectory, "attempt-history");
-    assert.equal(attemptHistory.length, 1);
-    assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
-    assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
-    assert.equal(typeof attemptHistory[0]?.outcome?.diagnostic, "string");
-    assert.ok((attemptHistory[0]?.outcome?.diagnostic as string).length > 0);
-    assert.equal(attemptHistory[0]?.role, "diarist");
-    assert.equal(attemptHistory[0]?.runId, runId);
+    // The retried host failure keeps its error terminal row on the relocated leg (#1299).
+    const terminals = statePayloads<{
+      face?: string; body?: { role?: string; runId?: string; diagnostic?: string };
+    }>(ticketPlacement.runDirectory, "terminal");
+    assert.deepEqual(terminals.map((terminal) => terminal.face), ["error"]);
+    assert.ok(typeof terminals[0]?.body?.diagnostic === "string" && terminals[0].body.diagnostic.length > 0);
+    assert.equal(terminals[0]?.body?.role, "diarist");
+    assert.equal(terminals[0]?.body?.runId, runId);
     assert.deepEqual(submittedParams(ticketPlacement.runDirectory), result.terminal!.submissions);
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
@@ -1939,10 +1933,10 @@ test("an in-call resume persists an after-dispatch diarist relocation at the tic
     assert.ok(turns >= 2, "the interrupted leg must be resumed in the same call");
     assert.equal(resumed.exitCode, 1);
     assert.equal(existsSync(unboundPlacement.runDirectory), false);
-    const currentPath = join(ticketPlacement.runDirectory, "current.json");
-    // Structured failure contract on the relocated run; stderr pointer delivery is
-    // a human-facing hint observed on real runs (#1161 T2 / #1058).
-    const error = terminalBodyAt(currentPath, "error") as {
+    // The error path the caller is handed opens after the move: the relocated leg's state.jsonl.
+    const errorPath = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error")?.path;
+    assert.equal(errorPath, join(ticketPlacement.runDirectory, "state.jsonl"));
+    const error = terminalBodyAt(errorPath!, "error") as {
       kind?: unknown;
       runId?: unknown;
       diagnostic?: unknown;

@@ -9,7 +9,7 @@ import {
   issuePiDurablePrincipalCoordinates,
 } from "../../src/pi/durable-principal.ts";
 import { writeRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { seedCurrentSection } from "./run-dossier-fixture.ts";
+import { seedStatePage } from "./run-dossier-fixture.ts";
 
 export const CANONICAL_SOURCE_RUN_ID = "01a034f1-75bf-71a6-bcf5-d1299145b1a5";
 export const CANONICAL_SOURCE_ROLE = "judge" as const;
@@ -40,13 +40,13 @@ export async function seedCanonicalSourceRun(
     })}\n`,
     "utf8",
   );
-  seedCurrentSection(coords.runDirectory, "admitted", {
+  seedStatePage(coords.runDirectory, "admitted-request", {
     role: CANONICAL_SOURCE_ROLE,
     runId,
     ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),
   });
   // Realistic source-run identity section (production always writes invocation).
-  seedCurrentSection(coords.runDirectory, "invocation", {
+  seedStatePage(coords.runDirectory, "invocation", {
     role: CANONICAL_SOURCE_ROLE,
     runId,
     host: "pi",

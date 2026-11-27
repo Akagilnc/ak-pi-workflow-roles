@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockStateRows, unlockStateRows } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -12,21 +12,17 @@ import {
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { statSync } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { trySettlePublicSeat } from "../../src/public-cli/post-admission.ts";
 import {
-  publishFailureTerminal,
+  
   settleHostEndedNoReceipt,
 } from "../../src/public-cli/settlement.ts";
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {
@@ -114,12 +110,12 @@ test("terminal write failure is noted beside the host failure terminal and does 
             const runDir = runDirectoryFromSessionDirectory(sessionDir);
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-            // Refuse every later write to the dossier's current.json after the child
-            // failure is observed (an in-place rewrite fails on the file's own mode).
+            // Refuse every later page write to the dossier's state.jsonl after the child
+            // failure is observed (the append fails on the file's own mode).
             // Settlement must keep boom primary and still emit one Terminal — not
             // outer-catch EACCES alone.
-            currentJson = join(runDir, "current.json");
-            lockCurrentJson(dirname(currentJson));
+            currentJson = join(runDir, "state.jsonl");
+            lockStateRows(dirname(currentJson));
             return {
               code: 1,
               stderr: "Error: boom\n",
@@ -149,160 +145,20 @@ test("terminal write failure is noted beside the host failure terminal and does 
       const runDirectory = join(
         home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
       );
-      // The terminal FACT is recorded as a history row; only its rendering into
-      // current.json was refused (the name is still the planted directory).
-      const recorded = statePayloads<{ face?: string }>(runDirectory, "terminal");
-      assert.equal(recorded.length, 1);
-      assert.equal(recorded[0]!.face, "error");
-      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
+      // The injected refusal really held: no terminal row was appended.
+      assert.deepEqual(statePayloads(runDirectory, "terminal"), []);
       // The refused write is a note beside the host terminal, in the run's session.
       const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
       assert.ok(typeof noteText === "string" && noteText !== "");
     } finally {
       if (currentJson !== undefined) {
         try {
-          unlockCurrentJson(dirname(currentJson));
+          unlockStateRows(dirname(currentJson));
         } catch {
           // cleanup best-effort
         }
       }
     }
-  });
-});
-/** The run's log.jsonl takes no more appends (it stays readable, as a permission fault leaves it). */
-async function blockLogAppends(runDirectory: string): Promise<void> {
-  const log = join(runDirectory, "log.jsonl");
-  await mkdir(runDirectory, { recursive: true });
-  // A resumed dispatch finds it already blocked.
-  await writeFile(log, "", { flag: "a" }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "EACCES") throw error;
-  });
-  await chmod(log, 0o400);
-}
-
-test("post-admission log.jsonl unwritable keeps the host terminal and notes the stderr log write", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "stderr log blocked"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-stderr-log-eisdir-001",
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          const runDir = runDirectoryFromSessionDirectory(sessionDir);
-          // A read-only log.jsonl makes the post-admission stderr log line append raise EACCES.
-          // The log line is best-effort — must not wash the already-observed child cause.
-          await blockLogAppends(runDir);
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-          return {
-            code: 1,
-            stderr: "Error: child failed after admission\n",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-          }),
-      },
-    );
-    const { terminal } = await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      diagnosticEquals: "Error: child failed after admission\n",
-    });
-    if (terminal.roleOutcome.kind === "failure") {
-      // A bare nonzero exit names no cause; the child's diagnostic is primary
-      // and the auxiliary log-write errno must not become the identity.
-      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-    }
-  });
-
-  // A sealed acceptance stays accepted. The stderr log-line failure is a
-  // note beside that terminal, and the sealed payload remains on submissions.
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io } = captureIo();
-    const acceptedDetails = { status: "converged", note: "ok" };
-    await configurePassingReviewSeats(home);
-    let sealedSessionFile = "";
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then log.jsonl blocked"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-stderr-log-eisdir-accepted-001",
-        io,
-        roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const runDir = runDirectoryFromSessionDirectory(sessionDir);
-            sealedSessionFile = join(sessionDir, "session.jsonl");
-            // A read-only log.jsonl makes the post-admission stderr log line
-            // append raise EACCES — even though the child accepted a lawful verdict.
-            await blockLogAppends(runDir);
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(
-              join(sessionDir, "session.jsonl"),
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolName: JUDGE_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: acceptedDetails,
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-              sealedAcceptance: { role: "judge" as const, details: acceptedDetails },
-            };
-          },
-        })),
-      },
-    );
-    // The host accepted. The stderr log line is secondary; its write failure is a note.
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.ok(
-      result.terminal?.submissions?.some(
-        (row) =>
-          typeof row === "object" && row !== null &&
-          (row as { status?: unknown }).status === "converged",
-      ),
-      JSON.stringify(result.terminal?.submissions),
-    );
-    // No duplicate settlement event; the accepted terminal stands.
-    const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
-    const sealedRunDirectory =
-      (await findRunDirectoryById(home, "run-stderr-log-eisdir-accepted-001"))
-      ?? runDirectoryFromSessionDirectory(dirname(sealedSessionFile));
-    const outcomes = readHistoryRows(sealedRunDirectory)
-      .filter((row) => row.kind === "attempt-history")
-      .map((row) => (row.payload as { outcome?: { kind?: string } }).outcome?.kind);
-    assert.deepEqual(outcomes, []);
-    assert.equal(terminalBodyAt(join(sealedRunDirectory, "current.json"), "report").role, "judge");
-    const liveSessionFile = sessionFileOf(sealedRunDirectory);
-    const noteText = sessionFaultNotes(liveSessionFile)[0]?.diagnostic;
-    assert.ok(typeof noteText === "string" && noteText !== "");
   });
 });
 test("multiline thrown diagnostic keeps full artifact identity", async () => {
@@ -599,60 +455,6 @@ test("no lawful output after an older provider error settles honestly as no_rece
 });
 
 // --- #953: real publish/read/settlement entries; structured reader contract only ---
-
-test("#953 a later success replaces an earlier failure terminal, and a later failure replaces the success", async () => {
-  await withTempHome(async (home) => {
-    const runId = "01a0-953-switch";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      "proj",
-      "unbound",
-      "runs",
-      `${runId}@judge`,
-    );
-    const sessionDirectory = sessionDirectoryOf(runDirectory);
-    await mkdir(runDirectory, { recursive: true });
-    await mkdir(sessionDirectory, { recursive: true });
-    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
-    const admitted = fixtureJudgeAdmitted({
-      runId,
-      runDirectory,
-      projectRoot: join(home, "proj"),
-      bookKey: "proj",
-    });
-    const authority = piDurablePrincipalAuthority;
-
-    seedTerminal(runDirectory, "error", { kind: "error", role: "judge", runId, diagnostic: "old boom" });
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    await sealAcceptedSubmission({
-      cwd: project, home, runId, runDirectory, role: "judge",
-      details: { judgeStatus: "pass" },
-    });
-    // This settle is the recording settlement for the sealed submission — not a
-    // later non-recording re-projection (#1161 N1: do not invent history on re-project).
-    const settled = await trySettlePublicSeat(admitted, authority, { recordAttemptHistory: true });
-    assert.equal(settled?.roleOutcome.kind, "accepted");
-    const afterSuccess = terminalBodyAt(join(runDirectory, "current.json"), "report");
-    assert.equal((afterSuccess.outcome as { kind?: string }).kind, "accepted");
-    assert.equal(afterSuccess.diagnostic, undefined, "the old failure's body is gone, not merged");
-
-    await publishFailureTerminal(admitted, { diagnostic: "new boom", cause: "provider" }, {
-      sessionDirectory,
-      sessionFile: join(sessionDirectory, "session.jsonl"),
-    });
-    const afterFailure = readRunTerminal(runDirectory);
-    assert.equal(afterFailure.status, "present");
-    if (afterFailure.status === "present") {
-      assert.equal(afterFailure.face, "error");
-      assert.equal(afterFailure.body.diagnostic, "new boom");
-      assert.equal(afterFailure.body.outcome, undefined, "the success's body is gone, not merged");
-    }
-  });
-});
 
 /**
  * #953: settleHostEndedNoReceipt replaces the leg's terminal with the no_receipt

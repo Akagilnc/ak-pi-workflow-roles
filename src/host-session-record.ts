@@ -1,8 +1,8 @@
 /**
  * Host conversation dossiers are native file copies; sitian append-only (ADR 0086).
  * Replaces live event streaming (ADR 0077) with post-exit CLI original copy.
- * Writes native-session-pointer when session ID is obtained.
- * Writes native-session-copy (or native-session-warning on retry failure) after CLI exit.
+ * Writes a native-session-warning line when the copy fails twice after CLI exit (#1299:
+ * the pointer and landing lines had no reader and are no longer written).
  * Log line write failures declare to stderr and never abort the leg.
  */
 import { randomBytes } from "node:crypto";
@@ -26,7 +26,7 @@ import type { SitianRecordInput } from "./sitian-contracts.ts";
 import { errorText, isEnoent } from "./unknown-value.ts";
 
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
-export const HOST_SESSION_RECORD_KIND = "host-session" as const;
+const HOST_SESSION_RECORD_KIND = "host-session" as const;
 
 function declareHostSessionFailure(error: unknown): void {
   const message = error instanceof Error ? (error.stack || error.message) : String(error);
@@ -34,7 +34,7 @@ function declareHostSessionFailure(error: unknown): void {
 }
 
 /** Declare sitian record failure once to stderr without aborting the leg (ADR 0086). */
-export function sitianReportSafe(input: SitianRecordInput): void {
+function sitianReportSafe(input: SitianRecordInput): void {
   try {
     sitianReport(input);
   } catch (error) {
@@ -139,38 +139,6 @@ export function resolveHostDossierLandingPath(options: {
     : join(options.sessionDirectory, `${options.host}.jsonl`);
 }
 
-/** Record native session pointer line to Sitian as soon as session ID is known. */
-export function recordNativeSessionPointer(options: {
-  readonly host: string;
-  readonly sessionId: string;
-  readonly cwd: string;
-  readonly sessionParent: string;
-  readonly home?: string | undefined;
-}): string | undefined {
-  if (options.host === "pi" || options.host === "hermes") {
-    return undefined;
-  }
-  const nativePath = options.host === "codex"
-    ? codexSessionsDirectory(options.home)
-    : resolveNativeSessionPath(options);
-  if (nativePath === undefined) return undefined;
-
-  sitianReportSafe({
-    level: "event",
-    kind: HOST_SESSION_RECORD_KIND,
-    host: options.host,
-    cwd: options.cwd,
-    sessionParent: options.sessionParent,
-    source: `${options.host}-dossier`,
-    payload: {
-      type: "native-session-pointer",
-      nativePath,
-      sessionId: options.sessionId,
-    },
-  });
-  return nativePath;
-}
-
 /** File clone via APFS `cp -c` with fallback to `copyFileSync`. */
 function copyFileCloneOrFallback(src: string, dest: string): void {
   try {
@@ -197,9 +165,9 @@ function copyGrokDossier(srcDir: string, destDir: string): void {
  * Copy the native host session original over the run's single landing path
  * after the child process exits. Copies beside the landing path and swaps in
  * on success, so a failed copy never destroys the previous good original.
- * Retries once. Success appends a native-session-copy line, repeated failure a
- * native-session-warning line. Does not throw; the turn outcome is never
- * altered by copy success or failure.
+ * Retries once; repeated failure appends a native-session-warning line naming the
+ * host original. Does not throw; the turn outcome is never altered by copy
+ * success or failure.
  */
 export function copyAndRecordHostDossier(options: {
   readonly host: string;
@@ -209,28 +177,8 @@ export function copyAndRecordHostDossier(options: {
   readonly sessionParent: string;
   readonly home?: string | undefined;
 }): void {
+  // Hermes keeps its original in sqlite (ADR 0086).
   if (options.host === "hermes") {
-    return;
-  }
-  const report = (payload: Record<string, unknown>): void => sitianReportSafe({
-    level: "event",
-    kind: HOST_SESSION_RECORD_KIND,
-    host: options.host,
-    cwd: options.cwd,
-    sessionParent: options.sessionParent,
-    source: `${options.host}-dossier`,
-    payload,
-  });
-  // Pi already lands at session/session.jsonl; record that landing through the
-  // same native-session-copy row current.json projects — no copy, no second
-  // original parser.
-  if (options.host === "pi") {
-    report({
-      type: "native-session-copy",
-      nativePath: options.sessionParent,
-      landingPath: options.sessionParent,
-      sessionId: options.sessionId,
-    });
     return;
   }
 
@@ -282,7 +230,7 @@ export function copyAndRecordHostDossier(options: {
         // success or failure — restore-if-absent, then clear the token when it
         // is no longer the unique original (peer may have published landing).
         // Never delete previous when restore failed and landing is still absent.
-        // Cleanup failure must not wash into native-session-copy success
+        // Cleanup failure must not wash into copy success
         // (#1161 C2 / 失败诚实). No orphan scan, no cross-call recovery, no queue.
         const previous = `${landingPath}.previous.${attemptToken}`;
         const hadPrevious = existsSync(landingPath);
@@ -380,25 +328,31 @@ export function copyAndRecordHostDossier(options: {
     }
   }
 
-  if (copySuccess) {
-    report({ type: "native-session-copy", nativePath, landingPath, sessionId: options.sessionId });
-  } else {
-    // A partial attempt must not masquerade as a complete native original.
-    if (stagingForCleanup !== undefined) {
-      try {
-        rmSync(stagingForCleanup, { recursive: true, force: true });
-      } catch (cleanupError) {
-        lastError = combineCopyFailureCauses(lastError, undefined, cleanupError, stagingForCleanup);
-      }
+  if (copySuccess) return;
+  // A partial attempt must not masquerade as a complete native original.
+  if (stagingForCleanup !== undefined) {
+    try {
+      rmSync(stagingForCleanup, { recursive: true, force: true });
+    } catch (cleanupError) {
+      lastError = combineCopyFailureCauses(lastError, undefined, cleanupError, stagingForCleanup);
     }
-    report({
+  }
+  sitianReportSafe({
+    level: "event",
+    kind: HOST_SESSION_RECORD_KIND,
+    host: options.host,
+    cwd: options.cwd,
+    sessionParent: options.sessionParent,
+    source: `${options.host}-dossier`,
+    payload: {
       type: "native-session-warning",
-      nativePath,
+      // A Codex rollout that discovery cannot find is named by its sessions directory and id.
+      nativePath: nativePath ?? (options.host === "codex" ? codexSessionsDirectory(options.home) : undefined),
       landingPath,
       sessionId: options.sessionId,
       error: errorText(lastError),
-    });
-  }
+    },
+  });
 }
 
 /** Fold swap / restore / staging-or-previous cleanup causes without washing any. */

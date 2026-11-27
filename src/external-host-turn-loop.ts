@@ -20,13 +20,12 @@ export { resolveLiveRunDirectoryPath } from "./public-cli/run-lifecycle.ts";
 import { deliveryLimitFromConfig } from "./receipt-delivery-policy.ts";
 import { parseRunLeaf } from "./role-run-placement.ts";
 import { projectTurnRequestLiveRunDirectory } from "./role-run-relocation.ts";
-import { reportRunRecord } from "./sitian-facade.ts";
 import { isOneShotWorkerReminderCode } from "./submission-errors.ts";
 
 /**
  * Prefer the request path when it still exists; otherwise re-locate by run id
- * (resolveLiveRunDirectoryPath). Mutates the live request so later turn-record /
- * exit-copy / fault notes stay on the new leaf. Authority is required so opaque
+ * (resolveLiveRunDirectoryPath). Mutates the live request so later exit-copy /
+ * fault notes stay on the new leaf. Authority is required so opaque
  * principal wire is resealed — never shape-guessed in place (#1183).
  */
 export async function syncTurnRequestLivePlacement(
@@ -103,30 +102,6 @@ export async function retainPackageFaultBesideLivePlacement(
     diagnostic: input.diagnostic,
     ...(Object.hasOwn(input, "error") ? { error: input.error } : {}),
   });
-}
-
-/**
- * What one host start was given: one `turn-delivery` row of history.jsonl per start. History is
- * the volume whose write failure does not stop a run (#833), so a row that cannot be
- * written is noted and the host still starts.
- */
-export async function recordTurnDelivery(
-  runDirectory: string,
-  delivered: { readonly systemPrompt: string; readonly outputSchema?: unknown },
-  source: string,
-): Promise<void> {
-  try {
-    reportRunRecord(runDirectory, "turn-delivery", {
-      systemPrompt: delivered.systemPrompt,
-      ...(delivered.outputSchema === undefined ? {} : { outputSchema: delivered.outputSchema }),
-    }, source);
-  } catch (error) {
-    await retainPackageFault({
-      runDirectory,
-      diagnostic: `turn delivery record failed beside host start: ${describeErrorIdentity(error)}`,
-      error,
-    });
-  }
 }
 
 export type ExternalPreparedTurn = Pick<

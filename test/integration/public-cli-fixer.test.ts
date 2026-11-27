@@ -12,7 +12,7 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "vitest";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -28,7 +28,8 @@ import {
 import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
-import { readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -106,7 +107,7 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       const runDirectory =
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@fixer`);
-      const admitted = readCurrentSection(runDirectory, "admitted") as {
+      const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as {
         instruction: string;
         prerequisitesPath?: string;
       };
@@ -179,19 +180,13 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
         : [],
       ["planned"],
     );
-      const report = result.terminal?.artifacts.find((a) => a.kind === "report");
-      assert.ok(report);
-      const reportBody = terminalBodyAt(report.path, "report") as {
-        outcome?: { payloads?: unknown };
-      };
-      // The submitted words live in history.jsonl; the terminal carries only the verdict.
-      assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
-      assert.deepEqual(submittedParams(dirname(report.path)), [receipt]);
+      // The report the caller opens is the receipt as submitted (#1299).
+      assert.deepEqual(reportedReceipts(result.terminal!), [receipt]);
       const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
       const planRunDirectory =
         (await findRunDirectoryById(home, "run-cli-fixer-plan"))
         ?? join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-cli-fixer-plan@fixer");
-      await access(join(planRunDirectory, "current.json"));
+      await access(join(planRunDirectory, "state.jsonl"));
     }
 
     {
@@ -277,7 +272,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       `${runId}@fixer`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
-    const admitted = readCurrentSection(runDirectory, "admitted") as {
+    const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as {
       phase: string; role: string; ticketNumber?: number;
     };
     assert.equal(admitted.role, "fixer");

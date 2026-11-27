@@ -28,7 +28,7 @@ function harness() {
     setActiveTools(names) { active = names; },
     getActiveTools: () => active,
     on(name, handler) {
-      if (name === "before_agent_start") startup = handler({ prompt: "", systemPrompt: "BASE", systemPromptOptions: {}, text: "", toolName: "", toolCallId: "", input: {}, isError: false, content: [], details: undefined, reason: "", messages: [], partialResult: undefined, turnIndex: 0, calls: [] }, context("doctor"));
+      if (name === "before_agent_start") startup = handler({ prompt: "", systemPrompt: "BASE", systemPromptOptions: {}, text: "", toolName: "", toolCallId: "", input: {}, isError: false, content: [], details: undefined, reason: "", messages: [], partialResult: undefined }, context("doctor"));
     },
     getCommands: () => [],
   };

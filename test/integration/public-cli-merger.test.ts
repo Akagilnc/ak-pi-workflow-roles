@@ -1,4 +1,5 @@
-import { readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -150,7 +151,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     assert.deepEqual([...input.resolutionScope], [fixture.conflictPath]);
     assert.equal(input.attemptId, "run-merger-admit-001");
     // Durable admitted identity retains adapter-derived envelope facts (not caller packet fields).
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
+    const persisted = (readPageSync(admitted.runDirectory, "admitted") ?? {}) as {
       instruction: string;
       derived: { targetObjectId: string };
     };
@@ -288,12 +289,10 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
       assert.equal((objectPayloads(result.terminal!.roleOutcome)[0] ?? {}).report, "resolved");
       const reportRef = result.terminal!.artifacts.find((a) => a.kind === "report")!;
-      const reportBody = terminalBodyAt(reportRef.path, "report") as { outcome?: { payloads?: unknown } };
-      assert.equal(reportBody.outcome !== undefined && "payloads" in reportBody.outcome, false);
-      const submitted = submittedParams(dirname(reportRef.path)) as ReadonlyArray<{ report?: string }>;
+      const submitted = reportedReceipts(result.terminal!) as ReadonlyArray<{ report?: string }>;
       assert.equal(submitted[0]?.report, "resolved");
       // The derived merge facts are the admitted section's own record.
-      const evidence = readCurrentSection(dirname(reportRef.path), "admitted") as {
+      const evidence = (readPageSync(dirname(dirname(reportRef.path)), "admitted") ?? {}) as {
         derived: {
           targetObjectId: string;
           sourceObjectId: string;
@@ -359,7 +358,7 @@ test("ak-role resume continues merger with exact session", async () => {
       `${runId}@merger`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
-    const admitted = readCurrentSection(runDirectory, "admitted") as { role: string; mergerInputPath: string; ticketNumber?: number };
+    const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as { role: string; mergerInputPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "merger");
     assert.equal(admitted.ticketNumber, 1201);
 

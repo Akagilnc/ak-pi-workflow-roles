@@ -4,7 +4,8 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
-import { lockCurrentJson, readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -579,8 +580,6 @@ test.each([1, 2])("#969 non-pi 给事中上呈 restores the parent with missing 
     const lostChild = result.terminal.receipts![0]!.receipt;
     const lostParent = join(parentDirectory, `receipts/${missing}.json`);
     await Promise.all([rm(lostChild), rm(lostParent)]);
-    if (missing === 1) lockCurrentJson(parentDirectory); // The latest original is readable; only publication fails.
-    else await rm(join(parentDirectory, "current.json"));
     const resumed = await runAkRole(["resume", "924", result.terminal.roleOutcome.role], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
@@ -598,7 +597,7 @@ test.each([1, 2])("#969 non-pi 给事中上呈 restores the parent with missing 
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal.roleOutcome.payloads, [{ status: "converged", ticketNumber: 924, draft: 2 }]);
     assert.deepEqual(resumed.terminal.submissions, resumed.terminal.roleOutcome.payloads);
-    assert.deepEqual(resumed.terminal.artifacts, []);
+    assert.deepEqual(reportedReceipts(resumed.terminal), resumed.terminal.roleOutcome.payloads);
     // #1200: each gate officer's row names the round it was summoned for. The
     // ruling resumed 给事中 directly, so its third row keeps that round; 符宝郎
     // names the 给事中 round the gate handed it.
@@ -797,10 +796,10 @@ test("#1165 secretariat --attach hands caller path to court diarist as-is", asyn
     const diaristLeaves = (await readdir(join(book, "924", "runs")))
       .filter((name) => name.endsWith("@diarist"));
     assert.equal(diaristLeaves.length, 1);
-    const diaristAdmitted = readCurrentSection(
+    const diaristAdmitted = (readPageSync(
       join(book, "924", "runs", diaristLeaves[0]!),
       "admitted",
-    ) as { attachments: Array<{ path: string }> };
+    ) ?? {}) as { attachments: Array<{ path: string }> };
     assert.deepEqual(
       diaristAdmitted.attachments.map((attachment) => attachment.path),
       [relativeAttach],
@@ -851,7 +850,7 @@ for (const preliminaryTicket of [null, 923] as const) {
     const book = join(home, ".ak-roles", "books", "project");
     const runName = "01a0sec1025-0000-7000-8000-000000000001@secretariat";
     assert.equal(
-      readCurrentSection(join(book, "924", "runs", runName), "admitted").ticketNumber,
+      (readPageSync(join(book, "924", "runs", runName), "admitted") ?? {}).ticketNumber,
       924,
       "the completed new-ticket run must be archived under its ticket",
     );
@@ -943,7 +942,7 @@ async function adapterBoundaryCase(input: {
       "01a0adp969-0000-7000-8000-000000000001@secretariat",
     );
     await mkdir(join(runDirectory, "session"), { recursive: true });
-    seedCurrentSection(runDirectory, "admitted", {
+    seedStatePage(runDirectory, "admitted-request", {
       ticketNumber: 924,
       projectRoot: project,
       runId: "01a0adp969-0000-7000-8000-000000000001",
@@ -951,7 +950,7 @@ async function adapterBoundaryCase(input: {
       bookKey: "test-book",
       runDirectory,
     });
-    seedCurrentSection(runDirectory, "invocation", {
+    seedStatePage(runDirectory, "invocation", {
       ticketNumber: 924,
       role: "secretariat",
       runId: "01a0adp969-0000-7000-8000-000000000001",

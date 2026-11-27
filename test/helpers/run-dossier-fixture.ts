@@ -1,95 +1,53 @@
 /**
- * Raw `current.json` access for tests (docs/dossier-topology.md, #1161).
- * Independent of src/run-dossier.ts on purpose: tests assert on the bytes a
- * reader outside the package would see, and seed fixtures without the
- * production writer.
+ * Raw run-dossier row access for tests (docs/dossier-topology.md, #1161): tests
+ * assert on the rows as a reader outside the package sees them. Pages are read
+ * through src/run-dossier.ts `readPageSync`; seeds append raw rows.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
-import { renderCurrentSync, type CurrentSection, type DerivedSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-
-/** Same sections as production `current.json` rendering (`src/run-dossier.ts`). */
-export type CurrentSectionName = CurrentSection | DerivedSection;
-
-/** Parsed `<run>/current.json`; `{}` when absent. */
-export function readCurrentJson(runDirectory: string): Record<string, unknown> {
-  try {
-    return JSON.parse(readFileSync(join(runDirectory, "current.json"), "utf8")) as Record<string, unknown>;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw error;
-  }
-}
-
-/** One section of `<run>/current.json` (`{}` when absent). */
-export function readCurrentSection(
-  runDirectory: string,
-  section: CurrentSectionName,
-): Record<string, unknown> {
-  return (readCurrentJson(runDirectory)[section] ?? {}) as Record<string, unknown>;
-}
-
-/** The history row kind of each whole-page section: the name of the file it replaced. */
-const PAGE_ROW_KIND: Readonly<Record<string, string>> = {
-  invocation: "invocation",
-  admitted: "admitted-request",
-  runState: "run-state",
-  terminal: "terminal",
-};
 
 /**
- * Seed (replace) one section, keeping the others. Creates the run directory. A
- * whole-page section is a fact that exists as a history row first: the row is
- * appended (raw, as the appender writes it) and `current.json` shows it.
+ * Seed (replace) one whole page: one state.jsonl row of that kind, appended raw as the
+ * appender writes it, so a leg outside a ledger home can be seeded too. Creates the run directory.
  */
-export function seedCurrentSection(
+export function seedStatePage(
   runDirectory: string,
-  section: CurrentSectionName,
+  kind: "invocation" | "admitted-request" | "run-state" | "terminal",
   value: Record<string, unknown>,
 ): void {
   mkdirSync(runDirectory, { recursive: true });
-  const kind = PAGE_ROW_KIND[section];
-  if (kind !== undefined) {
-    appendFileSync(
-      join(runDirectory, "state.jsonl"),
-      `${JSON.stringify({ level: "event", kind, identity: randomUUID(), timestamp: new Date().toISOString(), host: "pi", source: "test-seed", payload: value })}\n`,
-      "utf8",
-    );
-  }
-  writeFileSync(
-    join(runDirectory, "current.json"),
-    `${JSON.stringify({ ...readCurrentJson(runDirectory), [section]: value }, null, 2)}\n`,
+  appendFileSync(
+    join(runDirectory, "state.jsonl"),
+    `${JSON.stringify({ level: "event", kind, identity: randomUUID(), timestamp: new Date().toISOString(), host: "pi", source: "test-seed", payload: value })}\n`,
     "utf8",
   );
 }
 
-/** Seed the leg's terminal section (`{face, at, body}`), as settlement writes it. */
+/**
+ * Seed the leg's terminal page (`{face, at, body}`), as settlement writes it. A
+ * `report` face exists only in books written before #1299, which the analyst still reads.
+ */
 export function seedTerminal(
   runDirectory: string,
   face: "report" | "error" | "no_receipt",
   body: unknown,
 ): void {
-  seedCurrentSection(runDirectory, "terminal", { face, at: "2026-08-01T00:00:00.000Z", body });
+  seedStatePage(runDirectory, "terminal", { face, at: "2026-08-01T00:00:00.000Z", body });
 }
 
-/** Remove one section, keeping the others (a leg that never reached it): its rows go too. */
-export function clearCurrentSection(runDirectory: string, section: CurrentSectionName): void {
-  const { [section]: _removed, ...rest } = readCurrentJson(runDirectory);
-  writeFileSync(join(runDirectory, "current.json"), `${JSON.stringify(rest, null, 2)}\n`, "utf8");
-  const kind = PAGE_ROW_KIND[section];
-  const historyPath = join(runDirectory, "state.jsonl");
-  if (kind !== undefined && existsSync(historyPath)) {
-    const kept = readFileSync(historyPath, "utf8").split("\n").filter((line) => {
-      if (line.trim() === "") return false;
-      try { return (JSON.parse(line) as { kind?: unknown }).kind !== kind; } catch { return true; }
-    });
-    writeFileSync(historyPath, kept.length === 0 ? "" : `${kept.join("\n")}\n`, "utf8");
-  }
+/** Remove every state.jsonl row of one kind (a leg that never reached that page). */
+export function clearStateRows(runDirectory: string, kind: string): void {
+  const statePath = join(runDirectory, "state.jsonl");
+  if (!existsSync(statePath)) return;
+  const kept = readFileSync(statePath, "utf8").split("\n").filter((line) => {
+    if (line.trim() === "") return false;
+    try { return (JSON.parse(line) as { kind?: unknown }).kind !== kind; } catch { return true; }
+  });
+  writeFileSync(statePath, kept.length === 0 ? "" : `${kept.join("\n")}\n`, "utf8");
 }
 
 /**
@@ -132,7 +90,7 @@ export function statePayloads<T = Record<string, unknown>>(runDirectory: string,
 
 /**
  * Every line of `<run>/log.jsonl`, parsed raw (`[]` when absent), optionally
- * only rows of one `kind` (host stderr, dispatch-error, post-admission-diagnostic,
+ * only rows of one `kind` (dispatch-exception, post-admission-diagnostic,
  * resume-diagnostic, host-session, ...). Each row's content is its `payload`.
  */
 export function readRunLogRows(runDirectory: string, kind?: string): Record<string, unknown>[] {
@@ -142,8 +100,7 @@ export function readRunLogRows(runDirectory: string, kind?: string): Record<stri
 
 /**
  * Bind a host's native session id the way a host does: one `host-session-id`
- * row appended to the run's state.jsonl through the real appender. `current.json`
- * `host` is derived from these rows on the next write, so it cannot be seeded.
+ * row appended to the run's state.jsonl through the real appender.
  */
 export function seedHostSessionId(runDirectory: string, host: string, sessionId: unknown): void {
   mkdirSync(runDirectory, { recursive: true });
@@ -160,9 +117,10 @@ export function runLogPayloads<T = Record<string, unknown>>(runDirectory: string
  * Only those lines are parsed: a session may hold malformed lines of its own.
  */
 export function sessionFaultNotes(sessionFile: string): { diagnostic?: unknown }[] {
-  return readFileSync(sessionFile, "utf8").split("\n").filter((line) => line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE))
+  const type = "ak_post_admission_cleanup_diagnostic";
+  return readFileSync(sessionFile, "utf8").split("\n").filter((line) => line.includes(type))
     .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-    .flatMap((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE ? [entry.data ?? {}] : []);
+    .flatMap((entry) => entry.customType === type ? [entry.data ?? {}] : []);
 }
 
 /** The originals named by this leg's seals, in order. */
@@ -172,42 +130,54 @@ export function submittedParams(runDirectory: string): unknown[] {
 }
 
 /**
- * The body of the terminal section a `TerminalArtifactRef.path` (the run's
- * current.json) names, after checking the face.
+ * The body of the terminal row an error / no_receipt pointer names: the last
+ * `terminal` row of that file (the run's state.jsonl), after checking the face.
  */
 export function terminalBodyAt(
-  currentJsonPath: string,
-  face: "report" | "error" | "no_receipt",
+  statePath: string,
+  face: "error" | "no_receipt",
 ): Record<string, unknown> {
-  assert.equal(currentJsonPath.endsWith("current.json"), true, `artifact ref is the run's current.json: ${currentJsonPath}`);
-  const terminal = readCurrentJson(dirname(currentJsonPath)).terminal as
-    { face?: string; at?: unknown; body?: Record<string, unknown> } | undefined;
+  assert.equal(basename(statePath), "state.jsonl", `terminal pointer is the run's state.jsonl: ${statePath}`);
+  const terminal = statePayloads<{ face?: string; at?: unknown; body?: Record<string, unknown> }>(dirname(statePath), "terminal").at(-1);
   assert.equal(terminal?.face, face);
   assert.equal(typeof terminal?.at, "string");
   return terminal!.body!;
 }
 
 /**
+ * The receipts a settled terminal's report artifacts open (#1299): each report path is
+ * one of the terminal's own `receipts` rows, in the same order.
+ */
+export function reportedReceipts(terminal: {
+  readonly artifacts: readonly { readonly kind: string; readonly path: string }[];
+  readonly receipts?: readonly { readonly receipt: string }[];
+}): unknown[] {
+  const reports = terminal.artifacts.filter((artifact) => artifact.kind === "report").map((artifact) => artifact.path);
+  assert.deepEqual(reports, (terminal.receipts ?? []).map((row) => row.receipt));
+  return reports.map((path) => JSON.parse(readFileSync(path, "utf8")) as unknown);
+}
+
+/**
  * #1161 / #1165 / #1199: bound-at-rest leaf names after accepted seal
- * (dossier + leg-local `receipts/` / `session/`). Sole list of the six;
+ * (dossier + leg-local `receipts/` / `session/`). Sole list of the four;
  * allowlist below spreads this and adds unbound / seat-only leaves.
  */
 export const RUN_DIRECTORY_BOUND_AT_REST_ENTRIES = [
-  "current.json",
   "history.jsonl",
-  "log.jsonl",
   "receipts",
   "session",
   "state.jsonl",
 ] as const;
 
 /**
- * Leaf names a run directory may hold at rest: bound six plus unbound
- * staging `progress.jsonl` and seat input `merger-input.json`.
+ * Leaf names a run directory may hold at rest: bound four plus `log.jsonl` (only
+ * once the leg has a log row), unbound staging `progress.jsonl` and seat input
+ * `merger-input.json`.
  * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
  */
 export const RUN_DIRECTORY_ALLOWED_ENTRIES = [
   ...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
+  "log.jsonl",
   "progress.jsonl",
   "merger-input.json",
 ] as const;
@@ -220,20 +190,14 @@ export function assertRunDirectoryHoldsOnlyDossier(runDirectory: string): void {
 }
 
 /**
- * Make every later rendering of `<run>/current.json` fail: the name is taken by a
- * directory, so neither the temp-file rename nor the in-place fallback can write it
- * (a read-only mode is not enough: the lease release restores the run directory's
- * mode and the rename then replaces a read-only file). The rows (history.jsonl,
- * log.jsonl) stay appendable — the facts are still recorded, only their rendering
- * is refused.
+ * Make every later page write of `<run>/state.jsonl` fail (EACCES on append) while
+ * reads still work: the file's own mode refuses the append.
  */
-export function lockCurrentJson(runDirectory: string): void {
-  rmSync(join(runDirectory, "current.json"), { force: true });
-  mkdirSync(join(runDirectory, "current.json"));
+export function lockStateRows(runDirectory: string): void {
+  chmodSync(join(runDirectory, "state.jsonl"), 0o444);
 }
 
-/** Undo lockCurrentJson: the file is rendered again from the rows. */
-export function unlockCurrentJson(runDirectory: string): void {
-  rmSync(join(runDirectory, "current.json"), { recursive: true, force: true });
-  renderCurrentSync(runDirectory);
+/** Undo lockStateRows. */
+export function unlockStateRows(runDirectory: string): void {
+  chmodSync(join(runDirectory, "state.jsonl"), 0o644);
 }

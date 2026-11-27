@@ -21,7 +21,7 @@ import { runDirectoryOfSessionFile } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { withHermeticHome, withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { seedPublicSeat } from "../helpers/passing-review-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -181,6 +181,8 @@ test("#1201 default is the seat's most recently active leg under the ticket; <se
     const legB = turns.at(-1)!.leg;
     assert.notEqual(legB, legA);
     assert.deepEqual(seatRows(ticketDirectory, "judge").map((row) => row.round), ["1"]);
+    // A sibling leg whose directory exists but has written no row yet is not a candidate.
+    await mkdir(join(ticketDirectory, "runs", "01zz-not-started@judge"));
 
     // The later leg has no row yet and is still the default. The last turn was
     // already on that leg: the call has to start one more.
@@ -300,7 +302,7 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     // with or without a caller's dispatch (ADR 0085).
     await call(["resume", String(TICKET), "judge#1"], () => ruling({ later: true }));
     const forOf = (seat: string) => readTicketProgressLines(ticketDirectory).filter((row) => row.seat === seat).at(-1)?.for;
-    const pinned = () => readCurrentSection(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted").auditedReceipt;
+    const pinned = () => (readPageSync(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted") ?? {}).auditedReceipt;
     await boundTo(`${TICKET}:judge#1`);
     assert.equal(pinned(), "2.json");
     assert.equal(forOf("notary"), "judge#3");

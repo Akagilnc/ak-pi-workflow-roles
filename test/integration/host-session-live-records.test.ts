@@ -13,7 +13,6 @@ import { test } from "vitest";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
@@ -60,7 +59,7 @@ function request(
   };
 }
 
-test("headless host records pointer and copies native dossier post-exit (ADR 0086)", async () => {
+test("headless host copies native dossier post-exit and leaves no pointer or landing row (ADR 0086, #1299)", async () => {
   const ledger = createTempPackageHomeLedger({
     prefix: "ak-0086-headless-copy-",
     runName: "run@judge",
@@ -133,29 +132,9 @@ process.stdout.write(JSON.stringify({
     const content = await readFile(landingFile, "utf8");
     assert.equal(content, JSON.stringify({ native: "claude-session-data" }) + "\n");
 
-    // 2. Verify Sitian records
-    const read = {
-      records: (await readSitianRecords(join(ledger.runDirectory, "log.jsonl"))).records
-        .filter((record) => record.kind === HOST_SESSION_RECORD_KIND),
-    };
-    assert.equal(read.records.length, 2);
-
-    const pointerRec = read.records[0]!;
-    assert.equal(pointerRec.level, "event");
-    assert.equal(pointerRec.kind, HOST_SESSION_RECORD_KIND);
-    assert.equal((pointerRec.payload as { type: string }).type, "native-session-pointer");
-    const pointerNativePath = (pointerRec.payload as { nativePath: string }).nativePath;
-    assert.ok(typeof pointerNativePath === "string");
-    assert.ok(
-      pointerNativePath.includes("-workspace-with-underscore"),
-      `nativePath should sanitize underscore cwd to hyphens, got: ${pointerNativePath}`,
-    );
-
-    const copyRec = read.records[1]!;
-    assert.equal(copyRec.level, "event");
-    assert.equal(copyRec.kind, HOST_SESSION_RECORD_KIND);
-    assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
-    assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingFile);
+    // 2. A copied original leaves no pointer or landing row (#1299).
+    assert.deepEqual((await readSitianRecords(join(ledger.runDirectory, "log.jsonl"))).records
+      .filter((record) => record.kind === "host-session"), []);
   } finally {
     ledger.dispose();
   }
@@ -189,7 +168,6 @@ process.stdout.write(JSON.stringify({
 
     await mkdir(logPath);
     let declared = false;
-    let pointerDeclared = false;
     const origStderrWrite = process.stderr.write;
     process.stderr.write = (() => {
       declared = true;
@@ -213,12 +191,7 @@ process.stdout.write(JSON.stringify({
           prompt: "probe",
           jsonSchema: { type: "object" },
           terminatingToolName: "ak_judge_output",
-          async ingestStructuredOutput() {
-            // Both allocated and host-reported pointers precede receipt ingestion.
-            // Reset only the observation, never the log obstruction or copy input.
-            pointerDeclared = declared;
-            declared = false;
-          },
+          async ingestStructuredOutput() {},
           async closeRound() { return { accepted: true as const }; },
         }),
       });
@@ -227,18 +200,15 @@ process.stdout.write(JSON.stringify({
       // Under ADR 0086, sitian write failure does NOT abort the turn!
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
-      assert.equal(pointerDeclared, true, "pointer");
       assert.equal(declared, true, "warning");
 
       const native = join(ledger.home, ".claude", "projects", ledger.home.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
       await mkdir(dirname(native), { recursive: true });
       await writeFile(native, "native session", "utf8");
       declared = false;
-      pointerDeclared = false;
       const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
-      assert.equal(pointerDeclared, true, "pointer");
-      assert.equal(declared, true, "copy");
+      assert.equal(declared, false, "a copy that lands writes no row");
       const dossiers = (await readdir(sessionDir)).filter((entry) => entry.startsWith("claude"));
       // Only the single unnumbered original; no failed-ordinal marker from the earlier failed copy.
       assert.deepEqual(dossiers, ["claude.jsonl"]);

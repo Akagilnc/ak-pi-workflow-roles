@@ -5,7 +5,7 @@ import {
   activationBookDirectory,
   ensureRealDirectoryTree,
 } from "./activation-ledger-topology.ts";
-import { requireSafePositiveTicketNumber } from "./run-ticket-number.ts";
+import { parseTicketNumber, requireSafePositiveTicketNumber } from "./run-ticket-number.ts";
 
 import { isEnoent } from "./unknown-value.ts";
 
@@ -49,6 +49,12 @@ export function subjectDirectoryOfRun(runDirectory: string): string | undefined 
     return subjectDirectory;
   }
   return undefined;
+}
+
+/** The ticket a leg is filed under: its `<ticket>/runs/` directory. Unbound and flat legs have none. */
+export function filedTicketNumber(runDirectory: string): number | undefined {
+  const subjectDirectory = subjectDirectoryOfRun(runDirectory);
+  return subjectDirectory === undefined ? undefined : parseTicketNumber(basename(subjectDirectory));
 }
 
 /** #1199 / main: session originals stay under the leg — `<run>/session`. */

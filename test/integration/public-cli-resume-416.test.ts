@@ -193,7 +193,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
                                                                                     })});
     const sessionFile=sessionFileOf(runDir);
     // Host-dispatched failure: this call's roleOutcome structured reason ↔ terminal body (#1161 T2).
-    const recorded = terminalBodyAt(join(runDir, "current.json"), "error") as {
+    const recorded = terminalBodyAt(join(runDir, "state.jsonl"), "error") as {
       runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
     assert.equal(dispatched,true);

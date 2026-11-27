@@ -97,7 +97,6 @@ import {
   attachRecordedSubmissions,
   retainPackageFault,
   type ControlledFailure,
-  type PackageSideFact,
   type SettlementCourtScope,
   preparePublicSeat,
   type PreparedSeat,
@@ -417,12 +416,6 @@ export type ControlledFailureInput = {
   knownDiagnostic?: string;
   /** Secondary evidence already owned by the typed production failure channel. */
   knownDetails?: Readonly<Record<string, unknown>>;
-  /**
-   * A real failure this package hit while handling the call (e.g. the
-   * stderr log-line write). Recorded beside the host's report; never a
-   * cause, and never written into the host's open `details`.
-   */
-  packageFact?: PackageSideFact;
   /** The signal that killed the host child, when one did. */
   signal?: string;
   /**
@@ -564,9 +557,6 @@ export async function presentControlledFailure<
       : { knownDiagnostic: failureInput.knownDiagnostic }),
     ...(failureInput.signal === undefined ? {} : { signal: failureInput.signal }),
     ...(failureInput.cancelName === undefined ? {} : { cancelName: failureInput.cancelName }),
-    ...(failureInput.packageFact === undefined
-      ? {}
-      : { packageFact: failureInput.packageFact }),
   });
   const failure = failureInput.stderr.length === 0 || failureInput.stderr === classified.diagnostic
     ? classified
@@ -583,7 +573,6 @@ export async function presentControlledFailure<
   let terminal: TerminalResult;
   try {
     const settled = await settleFailureTerminalResult(admitted, failure, authority, {
-      recordAttemptHistory: true,
       ...(notePackageFault === undefined ? {} : { notePackageFault }),
       ...(courtAttemptId === undefined || courtAttemptId.length === 0
         ? {}
@@ -781,17 +770,7 @@ async function settleCompletedHostTurn<
   // turn genuinely started, so the next retry sends a resume payload — the
   // true cause settles through the loop's own existing dispatch-exception
   // machinery once the retry budget is exhausted.
-  // Best-effort: the stderr log line is secondary to the host terminal. A write
-  // failure leaves a durable note and, on a host failure, rides in
-  // packageFact. It does not become the cause.
-  let stderrLogWriteFailure: unknown;
   const note = courtScope.notePackageFault;
-  await besideConclusion(async (diagnostic, error) => {
-    stderrLogWriteFailure = error;
-    await note(diagnostic);
-  }, "stderr log write", async () => {
-    reportRunRecord(admitted.runDirectory, "stderr", { text: result.stderr }, "post-admission");
-  });
 
   // Host facts are resolved before trySettle. A host failure skips trySettle
   // so a later read cannot replace that report. With a clean host, failure to
@@ -830,10 +809,6 @@ async function settleCompletedHostTurn<
 
   // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
   if (hostFailed || processCancelName !== undefined) {
-    const stderrLogWriteFact =
-      stderrLogWriteFailure === undefined
-        ? undefined
-        : { stderrLogWriteFailure: describeCaughtError(stderrLogWriteFailure) };
     const failed = await settleAfterTurnStarted(
       admitted,
       withEngineDetourInvocationScope({
@@ -843,9 +818,6 @@ async function settleCompletedHostTurn<
         }),
         // Preserve the process signal beside the host's own facts.
         ...(processCancelName === undefined ? {} : { cancelName: processCancelName }),
-        // Secondary fact only — never the cause, and never merged into the
-        // host's own details.
-        ...(stderrLogWriteFact === undefined ? {} : { packageFact: stderrLogWriteFact }),
       }, request.invocationScopeId),
       adapters,
       env.principalAuthority,
@@ -869,7 +841,7 @@ async function settleCompletedHostTurn<
  * an escalated submission still carries the original role params. Later
  * receipts remain untouched; prose note/report is never consulted; this seam
  * does not adjudicate a ticket change. Runs in the public call's own process
- * (no role leg writes the run's current.json).
+ * (no role leg writes the run's pages).
  */
 async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation, payloads: readonly unknown[]): Promise<void> {
   if (admitted.ticketNumber !== undefined) return;
@@ -951,7 +923,6 @@ export async function dispatchPostAdmissionTurn<
    */
   const courtScope = {
     ...settlementScopeForTurn(request),
-    recordAttemptHistory: true as const,
     notePackageFault: packageFaultNoteFor(admitted, env, input.settlementIo ?? io),
   };
 
@@ -1005,7 +976,7 @@ export async function dispatchPostAdmissionTurn<
     // never publishes pointers or history; a superseding failure owns this turn —
     // do not publish the superseded verdict over that failure.
     if (prepared && result.terminal === prepared.terminal) {
-      const terminal = await publishSeatSettlement(admitted, env.principalAuthority, courtScope, prepared);
+      const terminal = await publishSeatSettlement(admitted, courtScope, prepared);
       result = { ...result, terminal };
       // An accepted court is settled whether or not its report rendered; an unsealed one stays open.
       const courtAttemptId = request.courtAttemptId;
@@ -1121,7 +1092,7 @@ export async function dispatchPostAdmissionTurn<
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }
     // Selected host axis rides the shared Host envelope for in-turn tools
-    // (detour usage ledger) — never a pre-spawn current.json reread.
+    // (detour usage ledger) — never a pre-spawn page reread.
     if (typeof env.host === "string" && env.host.trim() !== "") {
       turnRequest = { ...turnRequest, host: env.host.trim() };
     }
@@ -1833,7 +1804,7 @@ export async function trySettlePublicSeat(admitted: AdmittedRoleInvocation, auth
     if (io) await presentResumeFailurePointer(admitted, io, prepared.failure.diagnostic, prepared.failure);
     return { ...await settleFailureTerminalResult(admitted, prepared.failure, authority, { ...scope, previewOnly: true }), ...prepared.history };
   }
-  if ("terminal" in prepared) return publishSeatSettlement(admitted, authority, scope, prepared);
+  if ("terminal" in prepared) return publishSeatSettlement(admitted, scope, prepared);
   if (typeof scope.seal === "object") {
     await noteSettlementFault(admitted.runDirectory, scope, `无法定位被审原卷：${admitted.runDirectory}（${scope.seal.receipt}）`);
   }

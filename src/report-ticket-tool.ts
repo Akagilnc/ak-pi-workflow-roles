@@ -22,7 +22,7 @@ import {
 } from "./public-cli/invocation.ts";
 import { isUnboundRunDirectory, sessionDirectoryOf, sessionFileOf } from "./role-run-placement.ts";
 import { rewriteRunDirectoryPathValue } from "./role-run-path-rewrite.ts";
-import { readPageSync } from "./run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync } from "./run-dossier.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 import { isRecord } from "./unknown-value.ts";
 
@@ -51,12 +51,13 @@ function pageString(page: Record<string, unknown> | undefined, key: string): str
  * Build the relocate seam's admitted face from durable pages + live principal.
  * The executing process owns this snapshot for the bind/relocate call only.
  */
-export function admittedForLiveTicketReport(
+function admittedForLiveTicketReport(
   runDirectory: string,
   authority: DurablePrincipalAuthority,
+  rows: readonly Record<string, unknown>[],
 ): AdmittedRoleInvocation {
-  const admittedPage = readPageSync(runDirectory, "admitted") ?? {};
-  const invocationPage = readPageSync(runDirectory, "invocation") ?? {};
+  const admittedPage = pageFromRows(rows, "admitted", runDirectory) ?? {};
+  const invocationPage = pageFromRows(rows, "invocation", runDirectory) ?? {};
   const role = pageString(admittedPage, "role") ?? pageString(invocationPage, "role");
   const runId = pageString(admittedPage, "runId") ?? pageString(invocationPage, "runId");
   const bookKey = pageString(admittedPage, "bookKey") ?? pageString(invocationPage, "bookKey");
@@ -115,15 +116,16 @@ export async function reportTicketFromHostContext(
     throw new Error(`ak_report_ticket run directory missing: ${runDirectory}`);
   }
 
-  const admitted = admittedForLiveTicketReport(runDirectory, authority);
+  // One read of the leg's state rows serves the lookup and the bind that follows it.
+  const rows = readStateControlRowsSync(runDirectory);
+  const admitted = admittedForLiveTicketReport(runDirectory, authority, rows);
   const alreadyPlaced = !isUnboundRunDirectory(runDirectory);
   // #1171 B2 / #1025: already under a ticket leaf — do not rewrite durable identity.
   // Placement stays put; no heterogenous-ticket refuse policy (#1171 judge).
   if (!alreadyPlaced) {
-    await bindAdmittedTicketNumber(admitted, ticketNumber);
+    await bindAdmittedTicketNumber(admitted, ticketNumber, rows);
   }
-  // Live handles belong with rename ownership — before derived renderCurrentSync
-  // (#1171 F4-R2). Reuse relocate's heldLease.relocate seam; keep raw I/O throw.
+  // Live handles belong with rename ownership (#1171 F4-R2). Reuse relocate's heldLease.relocate seam; keep raw I/O throw.
   const applyLiveHandles = (nextDirectory: string): void => {
     // Capture live session handle before ownership transfer. After relocate the
     // write handle must share host-authority coords with the principal (#1183):
@@ -146,11 +148,10 @@ export async function reportTicketFromHostContext(
     }
   };
   // Always enter relocate: unbound→rename+publish; already-on-ticket→publish leftover staging.
-  const relocation = await relocateAdmittedRunToTicket(
-    admitted,
-    authority,
-    alreadyPlaced ? undefined : { relocate: applyLiveHandles },
-  );
+  // An already-filed leg has written nothing since the read above.
+  const relocation = alreadyPlaced
+    ? await relocateAdmittedRunToTicket(admitted, authority, undefined, undefined, rows)
+    : await relocateAdmittedRunToTicket(admitted, authority, { relocate: applyLiveHandles });
   const nextDirectory = relocation?.newRunDirectory ?? admitted.runDirectory;
   if (relocation === undefined) applyLiveHandles(nextDirectory);
 

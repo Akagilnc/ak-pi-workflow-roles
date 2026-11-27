@@ -23,7 +23,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { acquireRunWriterLease } from "../../src/public-cli/run-lifecycle.ts";
 import { readRunTerminal } from "../../src/run-terminal-artifacts.ts";
 import { isUnboundRunDirectory, listBookRunDirectories, parseRunLeaf } from "../../src/role-run-placement.ts";
-import { updateSectionSync } from "../../src/run-dossier.ts";
+import { updateSectionSync, readPageSync } from "../../src/run-dossier.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/environment-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -31,7 +31,6 @@ import {
   readHistoryRows,
   readRunLogRows,
   readStateRows,
-  readCurrentSection,
 } from "../helpers/run-dossier-fixture.ts";
 import { payloadFacts, payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
 
@@ -223,7 +222,7 @@ function dossierKinds(runDirectory: string) {
 }
 
 function admittedFacts(runDirectory: string) {
-  const admitted = readCurrentSection(runDirectory, "admitted");
+  const admitted = (readPageSync(runDirectory, "admitted") ?? {});
   return {
     sourceRunPath: admitted.sourceRunPath,
     ticketNumber: admitted.ticketNumber,

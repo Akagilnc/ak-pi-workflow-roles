@@ -21,7 +21,7 @@ import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencie
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines, type TicketProgressLine } from "../../src/ticket-progress.ts";
 import { runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
-import { readSectionSync } from "../../src/run-dossier.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -331,7 +331,7 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     await writeFile(receipts, "not a folder", "utf8");
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary").at(-1), ["6", undefined]);
-    assert.equal(readSectionSync(notaryRun, "admitted")?.auditedReceipt, undefined);
+    assert.equal(readPageSync(notaryRun, "admitted")?.auditedReceipt, undefined);
     assert.equal(diagnostics(), 5);
     // Nothing was named for review, so that officer's failed resume asks after no
     // audited original, even with the leg's drafts readable again.

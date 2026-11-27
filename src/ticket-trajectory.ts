@@ -6,7 +6,7 @@
  *
  * Station resolution (four-layer fallback):
  *   1) terminating tool name inside the session (ak_<role>_output)
- *   2) current.json invocation role
+ *   2) invocation page role (its state.jsonl row)
  *   3) run-directory name heuristic
  *   4) unknown (still listed; never dropped)
  *
@@ -18,7 +18,7 @@
  * write does not advertise refresh. Regeneration faults surface the original
  * cause via handle.closed / stop(). Caller stops the handle.
  */
-import { readSectionSync } from "./run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync } from "./run-dossier.ts";
 import { lstat, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -36,7 +36,7 @@ import {
   formatTokensCompact,
   formatUsdPrecise,
 } from "./human-format.ts";
-import { listBookRunDirectories, sessionDirectoryOf } from "./role-run-placement.ts";
+import { filedTicketNumber, listBookRunDirectories, sessionDirectoryOf, subjectDirectoryOfRun } from "./role-run-placement.ts";
 import { sitianVolumeDirectory } from "./sitian-appender.ts";
 import { isPositiveTicketNumber, readRunTicketNumber } from "./run-ticket-number.ts";
 import {
@@ -270,7 +270,9 @@ type InvocationInfo = {
 
 async function readInvocation(runDir: string): Promise<InvocationInfo | undefined> {
   try {
-    const parsed = readSectionSync(runDir, "invocation");
+    // One read of the leg's state rows serves both the invocation page and its ticket.
+    const rows = readStateControlRowsSync(runDir);
+    const parsed = pageFromRows(rows, "invocation", runDir);
     if (parsed === undefined) return undefined;
     const info: InvocationInfo = {};
     if (typeof parsed.role === "string" && parsed.role.trim()) info.role = parsed.role.trim();
@@ -292,8 +294,11 @@ async function readInvocation(runDir: string): Promise<InvocationInfo | undefine
     if (typeof parsed.correlationId === "string" && parsed.correlationId.trim() !== "") {
       info.correlationId = parsed.correlationId;
     }
-    // Display placement: board pages first, then migration-derived (never forges board).
-    const ticketNumber = await readRunTicketNumber(runDir);
+    // A flat legacy leg's placement is on its pages: board first, then
+    // migration-derived (never forges board). A subject-tree leg's is its directory.
+    const ticketNumber = subjectDirectoryOfRun(runDir) === undefined
+      ? await readRunTicketNumber(runDir, rows)
+      : undefined;
     if (ticketNumber !== undefined) info.ticketNumber = ticketNumber;
     return info;
   } catch (error) {
@@ -355,7 +360,12 @@ async function maxMtimeMs(paths: readonly string[]): Promise<number> {
   return max;
 }
 
-async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<ParsedRun> {
+/** `invocation` is the leg's identity row as the caller already read it (one read per leg). */
+async function parseRunDirectory(
+  runDir: string,
+  ledgerCoord: string,
+  invocation: InvocationInfo | undefined,
+): Promise<ParsedRun> {
   const runId = basename(runDir);
   const evidenceTarget = await realpathOrLexicalIfMissing(runDir);
   const evidenceHref = pathToFileURL(evidenceTarget).href;
@@ -404,8 +414,6 @@ async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<P
   const mtimeMs = await maxMtimeMs([...sessionFiles, ...axisLegFiles]);
 
   const lifecycle = extractTerminatingLifecycle(rows);
-  const models = extractModelFields(rows);
-  const invocation = await readInvocation(runDir);
   const { station, stationSource } = resolveStation({
     toolNames: lifecycle.toolNames,
     runId,
@@ -413,7 +421,7 @@ async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<P
   });
 
   // Session mechanical fields win; the invocation section fills gaps only.
-  let { model, provider, thinking } = models;
+  let { model, provider, thinking } = extractModelFields(rows);
   if (invocation) {
     if (!thinking && invocation.thinking) thinking = invocation.thinking;
     if (!provider && invocation.provider) provider = invocation.provider;
@@ -445,7 +453,7 @@ async function parseRunDirectory(runDir: string, ledgerCoord: string): Promise<P
 async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
   const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
   const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
-  return parseRunDirectory(runDir, ledgerCoord);
+  return parseRunDirectory(runDir, ledgerCoord, await readInvocation(runDir));
 }
 
 async function listRunIds(ledgerDir: string, issueNumber: number): Promise<string[]> {
@@ -639,31 +647,31 @@ ${stationBlocks || "<p data-empty=\"true\">no runs</p>"}
  * Load one ticket's runs via the S1 tracer path (read-only ledger scan).
  * Factory board reuses this — no parallel receipt parser.
  *
- * Book-run attribution (#176 / #859): read typed `ticketNumber` from each run's
- * current.json invocation section under listBookRunDirectories (flat legacy `runs/` + subject-tree
- * `<ticket|unbound>/runs/`). Legacy `issues/<N>/runs` remains a read-only
- * compatibility entrance. Unbound runs never join a ticket.
+ * Book-run attribution (#176 / #859 / #1299): a subject-tree leg belongs to the
+ * `<ticket|unbound>/runs/` directory it sits in; a flat legacy `runs/` leg keeps its
+ * typed `ticketNumber` from the invocation page. Legacy `issues/<N>/runs` remains a
+ * read-only compatibility entrance. Unbound runs never join a ticket.
  */
 
-/** One book run's typed binding projection from the invocation section. */
+/** One book run's placement and the identity row its one read found. */
 export type FlatRunTicketBinding = {
   readonly runDir: string;
   readonly runFolder: string;
   /** Book-relative coord (e.g. `runs/id@role` or `582/runs/id@role`). */
   readonly ledgerCoord: string;
   readonly ticketNumber?: number;
-  readonly role?: string;
-  readonly correlationId?: string;
+  /** The leg's identity row as this index read it; the trajectory reuses it. */
+  readonly invocation?: InvocationInfo;
 };
 
 /**
  * Book-level run index built once per lane/render and reused per ticket.
- * Pure derived view of book runs' current.json invocation sections — not a parallel ledger.
+ * Pure derived view of where book runs sit and their identity rows — not a parallel ledger.
  */
 export type TicketTrajectoryBookIndex = {
-  /** ticket number → runs bound via invocation ticketNumber. */
+  /** ticket number → runs filed under it. */
   readonly runsByTicket: ReadonlyMap<number, readonly FlatRunTicketBinding[]>;
-  /** Runs with no typed ticketNumber (unknown/unbound seam). */
+  /** Runs filed under no ticket (unknown/unbound seam). */
   readonly unboundRuns: readonly FlatRunTicketBinding[];
 };
 
@@ -676,17 +684,13 @@ export async function buildTicketTrajectoryBookIndex(
   for (const runDir of await listBookRunDirectories(root)) {
     const invocation = await readInvocation(runDir);
     const rel = relative(root, runDir).split(sep).join("/");
+    const ticketNumber = filedTicketNumber(runDir) ?? invocation?.ticketNumber;
     const binding: FlatRunTicketBinding = {
       runDir,
       runFolder: basename(runDir),
       ledgerCoord: rel,
-      ...(invocation?.ticketNumber !== undefined
-        ? { ticketNumber: invocation.ticketNumber }
-        : {}),
-      ...(invocation?.role !== undefined ? { role: invocation.role } : {}),
-      ...(invocation?.correlationId !== undefined
-        ? { correlationId: invocation.correlationId }
-        : {}),
+      ...(invocation === undefined ? {} : { invocation }),
+      ...(ticketNumber !== undefined ? { ticketNumber } : {}),
     };
     if (binding.ticketNumber !== undefined) {
       const list = runsByTicket.get(binding.ticketNumber) ?? [];
@@ -718,14 +722,14 @@ export async function loadUnboundTrajectoryRuns(
   const index = bookIndex ?? (await buildTicketTrajectoryBookIndex(root));
   const out: UnboundTrajectoryRun[] = [];
   for (const binding of index.unboundRuns) {
-    const run = await parseRunDirectory(binding.runDir, binding.ledgerCoord);
+    const run = await parseRunDirectory(binding.runDir, binding.ledgerCoord, binding.invocation);
     out.push({
       run,
-      role: binding.role ?? run.station,
+      role: binding.invocation?.role ?? run.station,
       observedAt: run.startedAt ?? run.lastActivityAt ?? "",
-      ...(binding.correlationId === undefined
+      ...(binding.invocation?.correlationId === undefined
         ? {}
-        : { correlationId: binding.correlationId }),
+        : { correlationId: binding.invocation.correlationId }),
     });
   }
   return out;
@@ -754,13 +758,13 @@ export async function loadTicketTrajectoryRuns(
     runs.push(parsed);
   }
 
-  // Book runs (flat + subject-tree) bound by typed invocation ticketNumber.
+  // Book runs filed under this ticket: by directory, or a flat leg by its page.
   const flatBindings = index.runsByTicket.get(issueNumber) ?? [];
   for (const binding of flatBindings) {
     const resolvedRunDir = resolve(binding.runDir);
     if (seenRunDirs.has(resolvedRunDir)) continue;
     seenRunDirs.add(resolvedRunDir);
-    runs.push(await parseRunDirectory(binding.runDir, binding.ledgerCoord));
+    runs.push(await parseRunDirectory(binding.runDir, binding.ledgerCoord, binding.invocation));
   }
 
   return runs;

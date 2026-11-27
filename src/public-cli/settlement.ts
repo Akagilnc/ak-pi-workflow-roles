@@ -7,12 +7,9 @@ import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
-import { sessionFileOf, subjectDirectoryOfRun } from "../role-run-placement.ts";
-import { parseTicketNumber } from "../run-ticket-number.ts";
+import { filedTicketNumber, sessionFileOf, subjectDirectoryOfRun } from "../role-run-placement.ts";
 
-import { sitianReport, type RecordPointer } from "../sitian-facade.ts";
 import {
-  ATTEMPT_HISTORY_IDENTITY_FIELD,
   TERMINAL_COURT_ATTEMPT_FIELD,
   writeRunTerminal,
 } from "../run-terminal-artifacts.ts";
@@ -41,8 +38,6 @@ import {
   withEngineDetourToolUsageFact,
 } from "../engine-detour-usage.ts";
 
-import type { DoctorCaseCost } from "../doctor-contracts.ts";
-import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../dossier-resolution.ts";
 import {
   homeFromRunDirectory,
   type AdmittedRoleInvocation,
@@ -50,8 +45,6 @@ import {
 import { findLatestDurablePackagedRoleTerminal } from "../navigator-invocation-identity.ts";
 import {
   isNavigatorSeat,
-  packagedRoleMetadata,
-  type PackagedArtifactFace,
 } from "../packaged-role-registry.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
@@ -67,7 +60,6 @@ import type {
   DurablePrincipalCoordinates,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { readStateRowsSync, runCurrentPath } from "../run-dossier.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
 
 /**
@@ -75,8 +67,6 @@ import { reportRunRecord } from "../sitian-facade.ts";
  * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
  */
 export type SettlementCourtScope = {
-  /** Only the dispatched host turn may record this attempt; later reads are projections. */
-  readonly recordAttemptHistory?: true;
   /** Inspect a candidate without rewriting history or terminal artifact faces. */
   readonly previewOnly?: true;
   /** Recover the court of an already sealed submission. */
@@ -163,7 +153,7 @@ export async function retainPackageFault(input: {
  * diagnostic never reaches a real caller — the dossier is the durable
  * channel that does (失败诚实宪法 真因必须落痕).
  */
-export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
+const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
   "ak_post_admission_cleanup_diagnostic" as const;
 
 /**
@@ -171,9 +161,8 @@ export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
  * even though the attempt's own io may be dummyIo (#840 r9 判词 class 1).
  * Single authoritative durable channel — a dossier custom entry via
  * sessionAppender — not a standing duplicate. Only when that one write
- * itself fails does this fall back to a plain run-artifacts file (reusing
- * auto-resume.ts's existing dispatch-error retention helper — no new
- * mechanism), so an unhealthy session never leaves this diagnostic with
+ * itself fails does this fall back to a `post-admission-diagnostic` row in the
+ * run's log.jsonl, so an unhealthy session never leaves this diagnostic with
  * zero durable trace (#840 bounce class 2); a healthy session never gets a
  * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
  */
@@ -249,7 +238,7 @@ export function filedIdentity(
 ): Pick<TerminalResult, "ticket" | "receipts"> {
   const subjectDirectory = subjectDirectoryOfRun(runDirectory);
   if (subjectDirectory === undefined) return {};
-  const ticket = parseTicketNumber(basename(subjectDirectory));
+  const ticket = filedTicketNumber(runDirectory);
   return {
     ...(ticket === undefined ? {} : { ticket }),
     ...(filed.length === 0 ? {} : {
@@ -446,7 +435,7 @@ async function settleNoReceiptTerminal(
     artifacts: [],
     ...filedIdentity(admitted.runDirectory),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
-  return publishSeatSettlement(admitted, authority, scope, { terminal });
+  return publishSeatSettlement(admitted, scope, { terminal });
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -506,7 +495,7 @@ export type ControlledFailure = RoleTurnKnownFailure & {
  * Facts the package itself established, each kept whole. None of them is ever
  * promoted into the host's cause, diagnostic or details.
  */
-export type PackageSideFact = {
+type PackageSideFact = {
   /**
    * This package's own view of the host's exit for this call. Kept beside the
    * host's `details`, never inside it.
@@ -525,8 +514,6 @@ export type PackageSideFact = {
   readonly cancelName?: string;
   /** An exception caught after the host already reported this call. */
   readonly thrown?: RoleTurnKnownFailure & { readonly diagnostic: string };
-  /** A durable stderr log-line write that failed while handling this call. */
-  readonly stderrLogWriteFailure?: unknown;
 };
 
 /**
@@ -737,7 +724,6 @@ function hostReportedFallbackOf(input: {
 
 /** This call's package-side facts, or undefined when there are none. */
 function packageFactsOf(input: {
-  readonly packageFact?: PackageSideFact;
   readonly code?: number | null;
   readonly timedOut?: boolean;
   readonly signal?: string;
@@ -750,7 +736,6 @@ function packageFactsOf(input: {
     ...(input.cancelName === undefined || input.cancelName.length === 0
       ? {}
       : { cancelName: input.cancelName }),
-    ...(input.packageFact ?? {}),
   };
   return Object.keys(facts).length === 0 ? undefined : facts;
 }
@@ -786,8 +771,6 @@ export function classifyPostAdmissionFailure(input: {
    * it only supplies fallback wording: the host's own diagnostic always wins.
    */
   readonly cancelName?: string;
-  /** Further package-side facts merged under `packageFact`, never the cause. */
-  packageFact?: PackageSideFact;
 }): ControlledFailure {
   // Own-key presence, not value: `throw undefined` is a real caught exception.
   // An exception caught after the host already reported its own failure carries
@@ -1003,51 +986,6 @@ export async function readBoundSessionEntries(
   return await readStrictPiSessionJsonl(sessionFile) as SessionEntry[];
 }
 
-/**
- * #419 per-attempt process history. 史必追加，指针可覆盖；指针可以覆盖的前提是史已落。
- * Reuses the run session principal's append-only JSONL custom-entry shape
- * (plain custom entries are state records and never enter LLM context), so no
- * second ledger mechanism is introduced.
- */
-export const ATTEMPT_HISTORY_ENTRY_TYPE = "ak_run_attempt_history" as const;
-
-/** Complete per-attempt result as recorded in the appended history. */
-type AttemptHistoryOutcome =
-  | TerminalRoleOutcome
-  | ({ kind: "failure"; role: string } & ControlledFailure);
-
-type AttemptHistorySource = {
-  readonly role: string;
-  readonly runId: string;
-  readonly sessionFile: string;
-};
-
-function attemptHistorySource(
-  admitted: Pick<AdmittedRoleInvocation, "role" | "runId">,
-  coordinates: Pick<DurablePrincipalCoordinates, "sessionFile">,
-): AttemptHistorySource {
-  return {
-    role: admitted.role,
-    runId: admitted.runId,
-    sessionFile: coordinates.sessionFile,
-  };
-}
-
-/** Append the complete attempt to the package ledger before overwriting pointer artifacts (#419). */
-export async function appendRunAttemptHistory(
-  source: AttemptHistorySource,
-  outcome: AttemptHistoryOutcome,
-): Promise<RecordPointer> {
-  return sitianReport({
-    level: "event",
-    kind: "attempt-history",
-    subject: { runId: source.runId },
-    sessionParent: source.sessionFile,
-    payload: { type: ATTEMPT_HISTORY_ENTRY_TYPE, role: source.role, runId: source.runId, outcome },
-    source: "settlement",
-  });
-}
-
 function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
@@ -1244,76 +1182,16 @@ async function extractNavigatorFactFromAdmittedSession(
   }
 }
 
-/** 甲 pointer + court tag carried on the terminal body for later re-projection. */
-function terminalBelongingFields(
-  attemptHistoryIdentity: string | undefined,
-  scope: SettlementCourtScope | undefined,
-): Record<string, string> {
+/** The court tag carried on a terminal body (its removal is #1202's question). */
+function terminalCourtField(scope: SettlementCourtScope | undefined): Record<string, string> {
   const courtAttemptId = scope?.courtAttemptId;
-  return {
-    ...(attemptHistoryIdentity === undefined
-      ? {}
-      : { [ATTEMPT_HISTORY_IDENTITY_FIELD]: attemptHistoryIdentity }),
-    ...(courtAttemptId === undefined || courtAttemptId.length === 0
-      ? {}
-      : { [TERMINAL_COURT_ATTEMPT_FIELD]: courtAttemptId }),
-  };
-}
-
-/**
- * Belonging attempt-history identity for a non-recording re-projection (#1161 甲 / R2).
- * Court-tagged settle recovers from that court's own prior terminal row in
- * state.jsonl. Untagged normal rewrite (bare resume after a sealed face, no open
- * court) keeps only the face being rewritten — the last terminal row's own
- * identity. If that face has none (approved gap), return undefined: never walk
- * older terminals for a non-empty pointer, never invent-append (N1), never
- * subject.attemptId on attempt-history. Bare resume therefore cannot restore
- * court B's pointer while the current face is A (or A's gap). Court-tagged
- * lookup that finds no row still returns undefined — the approved gap.
- */
-async function belongingAttemptHistoryIdentity(
-  runDirectory: string,
-  scope: SettlementCourtScope | undefined,
-): Promise<string | undefined> {
-  const courtAttemptId = scope?.courtAttemptId;
-  let rows: readonly Record<string, unknown>[];
-  try {
-    rows = readStateRowsSync(runDirectory);
-  } catch (error) {
-    // Documented: history/state failure domain does not block the terminal face
-    // (#1161 / main history disposition). True cause must leave a trace.
-    await noteSettlementFault(
-      runDirectory,
-      scope,
-      `terminal state read failed beside terminal projection: ${describeErrorIdentity(error)}`,
-    );
-    return undefined;
-  }
-  if (courtAttemptId !== undefined && courtAttemptId.length > 0) {
-    let found: string | undefined;
-    for (const row of rows) {
-      if (row.kind !== "terminal" || !isRecord(row.payload)) continue;
-      const body = row.payload.body;
-      if (!isRecord(body) || body[TERMINAL_COURT_ATTEMPT_FIELD] !== courtAttemptId) continue;
-      const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
-      if (typeof identity === "string" && identity.length > 0) found = identity;
-    }
-    return found;
-  }
-  // Untagged: only the current face (last terminal). Gap face stays a gap.
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    const row = rows[index]!;
-    if (row.kind !== "terminal" || !isRecord(row.payload)) continue;
-    const body = row.payload.body;
-    if (!isRecord(body)) return undefined;
-    const identity = body[ATTEMPT_HISTORY_IDENTITY_FIELD];
-    return typeof identity === "string" && identity.length > 0 ? identity : undefined;
-  }
-  return undefined;
+  return courtAttemptId === undefined || courtAttemptId.length === 0
+    ? {}
+    : { [TERMINAL_COURT_ATTEMPT_FIELD]: courtAttemptId };
 }
 
 /** Sealed seats present the ledger. A session tool error does not invent a host failure. */
-export type PreparedSeat<T extends TerminalResult = TerminalResult> = { terminal: T; report?: Record<string, unknown> };
+export type PreparedSeat<T extends TerminalResult = TerminalResult> = { terminal: T };
 
 export type SeatReadFailure = { failure: ControlledFailure; history: Pick<TerminalResult, "submissions" | "receiptErrors"> };
 
@@ -1370,97 +1248,27 @@ export async function preparePublicSeat(
     artifacts: [],
     ...filedIdentity(admitted.runDirectory, current),
   }, coordinates.sessionDirectory, detourUsageContext(admitted, scope));
-  return { terminal, report: declaredSeatReport(admitted, roleOutcome, entries, scope) };
+  return { terminal };
 }
 
-/** The cancellation check and previews do not change the already computed verdict. */
-export async function publishSeatSettlement<T extends TerminalResult>(admitted: AdmittedRoleInvocation, authority: DurablePrincipalAuthority,
-  scope: SettlementCourtScope | undefined, { terminal, report }: PreparedSeat<T>): Promise<T> {
+/**
+ * The cancellation check and previews do not change the already computed verdict.
+ * An accepted court writes no terminal row: the report the caller opens is the
+ * receipt it accepted (#1299). Only no_receipt leaves a terminal row.
+ */
+export async function publishSeatSettlement<T extends TerminalResult>(admitted: AdmittedRoleInvocation,
+  scope: SettlementCourtScope | undefined, { terminal }: PreparedSeat<T>): Promise<T> {
   if (scope?.previewOnly) return terminal;
+  if (terminal.roleOutcome.kind !== "no_receipt") {
+    return { ...terminal, artifacts: (terminal.receipts ?? []).map(({ receipt }) => ({ kind: "report" as const, path: receipt })) };
+  }
   const published = await besideConclusion((diagnostic) => noteSettlementFault(admitted.runDirectory, scope, diagnostic), "terminal publication", async () => {
-    if (report !== undefined) {
-      writeRunTerminal(admitted.runDirectory, "report", report);
-      return { ...terminal, artifacts: [{ kind: "report", path: runCurrentPath(admitted.runDirectory) }] };
-    }
-    const identity = scope?.recordAttemptHistory
-      ? (await appendRunAttemptHistory(attemptHistorySource(admitted, coordinatesFromAdmitted(authority, admitted)), terminal.roleOutcome)).identity
-      : await belongingAttemptHistoryIdentity(admitted.runDirectory, scope);
     writeRunTerminal(admitted.runDirectory, "no_receipt", {
-      role: admitted.role, runId: admitted.runId, outcome: terminal.roleOutcome, ...terminalBelongingFields(identity, scope),
+      role: admitted.role, runId: admitted.runId, outcome: terminal.roleOutcome, ...terminalCourtField(scope),
     });
     return terminal;
   });
   return published ?? terminal;
-}
-
-/**
- * #836: cost and the auditor's no-receipt facts ride beside the role's
- * testimony on the current attempt's candidate entry. Absence is omitted,
- * never invented. Both facts come from that one entry.
- */
-function extractDoctorCandidateFacts(
-  entries: readonly SessionEntry[],
-): { readonly cost?: DoctorCaseCost; readonly auditNoReceipt?: unknown } {
-  const scanStart = currentAttemptStartIndex(entries);
-  for (let i = entries.length - 1; i >= scanStart; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== DOCTOR_CANDIDATE_ENTRY_TYPE) {
-      continue;
-    }
-    const data = entry.data;
-    if (!isRecord(data)) return {};
-    return {
-      ...(data.cost === undefined ? {} : { cost: data.cost as DoctorCaseCost }),
-      ...(data.auditNoReceipt === undefined ? {} : { auditNoReceipt: data.auditNoReceipt }),
-    };
-  }
-  return {};
-}
-
-const EMPTY_ARTIFACT_FACE: PackagedArtifactFace = {};
-
-/** Terminal face for one seat. Absent means the report carries only the shared facts. */
-function seatArtifactFace(role: string): PackagedArtifactFace {
-  const record = packagedRoleMetadata(role);
-  if (record !== undefined && "artifactFace" in record && record.artifactFace !== undefined) {
-    return record.artifactFace;
-  }
-  return EMPTY_ARTIFACT_FACE;
-}
-
-function doctorReportFacts(
-  face: PackagedArtifactFace,
-  roleOutcome: TerminalRoleOutcome,
-  entries: readonly SessionEntry[],
-): Record<string, unknown> {
-  if (face.doctorReportFacts !== true || roleOutcome.kind === "audit_escalation") return {};
-  const facts = extractDoctorCandidateFacts(entries);
-  return {
-    ...(facts.cost === undefined ? {} : { cost: facts.cost }),
-    ...(facts.auditNoReceipt === undefined ? {} : { auditNoReceipt: facts.auditNoReceipt }),
-  };
-}
-
-function declaredSeatReport(
-  admitted: AdmittedRoleInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  entries: readonly SessionEntry[],
-  scope: SettlementCourtScope | undefined,
-): Record<string, unknown> {
-  const face = seatArtifactFace(admitted.role);
-  const phase = face.reportPhase === true
-    ? { phase: (admitted as { phase?: unknown }).phase }
-    : {};
-  // The seal names the original. The terminal carries verdict facts only.
-  const { payloads: _payloads, ...verdict } = roleOutcome as TerminalRoleOutcome & { payloads?: unknown };
-  return {
-    role: admitted.role,
-    runId: admitted.runId,
-    ...phase,
-    outcome: verdict,
-    ...doctorReportFacts(face, roleOutcome, entries),
-    ...terminalBelongingFields(undefined, scope),
-  };
 }
 
 /** Latest top-level user message index; 0 when the session has none (initial attempt). */
@@ -1482,34 +1290,11 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
 export async function publishFailureTerminal(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
-  coordinates: DurablePrincipalCoordinates,
   onErrorPublished?: (path: string) => void,
   scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
-  // #419: a dispatched failure joins history before the terminal changes. A history
-  // write failure never strands the failure terminal; it is rethrown after it.
-  let historyFailure: unknown;
-  let historyFailed = false;
-  const failureOutcome = { kind: "failure" as const, role: admitted.role, ...failure };
-  let attemptHistoryIdentity: string | undefined;
-  if (scope?.recordAttemptHistory === true) {
-    try {
-      const pointer = await appendRunAttemptHistory(
-        attemptHistorySource(admitted, coordinates),
-        failureOutcome,
-      );
-      attemptHistoryIdentity = pointer.identity;
-    } catch (error) {
-      historyFailure = error;
-      historyFailed = true;
-    }
-  } else {
-    attemptHistoryIdentity = await belongingAttemptHistoryIdentity(
-      admitted.runDirectory,
-      scope,
-    );
-  }
-  writeRunTerminal(admitted.runDirectory, "error", {
+  // The error pointer names the file the terminal row landed in (#1299).
+  const path = writeRunTerminal(admitted.runDirectory, "error", {
     kind: "error",
     role: admitted.role,
     runId: admitted.runId,
@@ -1520,11 +1305,9 @@ export async function publishFailureTerminal(
     // This package's own facts, kept beside the host's report.
     ...(failure.packageFact === undefined ? {} : { packageFact: failure.packageFact }),
     ...(failure.stderr === undefined ? {} : { stderr: failure.stderr }),
-    ...terminalBelongingFields(attemptHistoryIdentity, scope),
+    ...terminalCourtField(scope),
   });
-  const path = runCurrentPath(admitted.runDirectory);
   onErrorPublished?.(path);
-  if (historyFailed) throw historyFailure;
   return [{ kind: "error", path }];
 }
 
@@ -1552,7 +1335,7 @@ export async function settleFailureTerminalResult(
     );
   const artifacts: TerminalArtifactRef[] = options.previewOnly === true ? [] : await besideConclusion(
     (diagnostic) => noteSettlementFault(admitted.runDirectory, options, diagnostic), "failure artifact publication",
-    () => publishFailureTerminal(admitted, failure, coordinates, options.onErrorPublished, options)) ?? [];
+    () => publishFailureTerminal(admitted, failure, options.onErrorPublished, options)) ?? [];
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,

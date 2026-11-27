@@ -1,20 +1,17 @@
 /**
  * Names in a run directory (docs/dossier-topology.md, #1161). Constants only, so
- * the appender and the `current.json` renderer can both import them.
+ * the appender and the dossier readers can both import them.
  */
-export const RUN_CURRENT_FILE = "current.json" as const;
 export const RUN_HISTORY_FILE = "history.jsonl" as const;
 export const RUN_LOG_FILE = "log.jsonl" as const;
 export const RUN_STATE_FILE = "state.jsonl" as const;
 
 /**
  * Record kinds that make a leg's history: they land in `history.jsonl`. The
- * original submission ledger and attempt history, the prompt/schema each turn was
- * started with, officer pointers, and the ticket progress rows a leg wrote.
+ * original submission ledger, officer pointers, and the ticket progress rows a leg wrote.
  */
 export const RUN_HISTORY_KINDS: ReadonlySet<string> = new Set([
-  "candidate", "roundContext", "outcome", "sealed", "post-seal-anomaly",
-  "attempt-history", "turn-delivery", "officer-pointer", "progress",
+  "candidate", "outcome", "sealed", "post-seal-anomaly", "officer-pointer", "progress",
 ]);
 
 /** History record kind of a ticket progress row carried to settlement (#1201). */

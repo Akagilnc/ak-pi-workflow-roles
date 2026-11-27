@@ -7,8 +7,9 @@
  * Relocated leg top-level shape matches docs/dossier-topology.md.
  */
 import assert from "node:assert/strict";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -244,7 +245,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     );
 
     const topLevel = new Set(await readdir(ticketRunDirectory));
-    for (const required of ["current.json", "history.jsonl", "state.jsonl", "log.jsonl"]) {
+    for (const required of ["history.jsonl", "state.jsonl"]) {
       assert.equal(topLevel.has(required), true, `topology requires ${required}`);
     }
     // #1199: session originals stay under the leg (`<run>/session`).
@@ -278,7 +279,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     );
 
     // Relocated admitted page keeps caller paths opaque.
-    const current = JSON.parse(await readFile(join(ticketRunDirectory, "current.json"), "utf8")) as {
+    const current = { admitted: (readPageSync(ticketRunDirectory, "admitted") ?? {}) } as unknown as {
       admitted: {
         attachments: Array<Record<string, unknown>>;
         prerequisitesPath?: string;

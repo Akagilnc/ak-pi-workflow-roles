@@ -39,6 +39,7 @@ import {
 import { discardStdout, type CliIo } from "./cli-io.ts";
 import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import { reportRunRecord } from "../sitian-facade.ts";
+import { rewriteRunDirectoryPathValue } from "../role-run-path-rewrite.ts";
 
 import { errorText } from "../unknown-value.ts";
 
@@ -126,7 +127,7 @@ export class TurnDispatchedFailure extends Error {
 }
 
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
-export const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
+const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
 
 /** Cycle- and bigint-safe JSON replacer so serialization itself cannot drop data. */
 function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
@@ -313,12 +314,15 @@ export async function runWithAutoResumeLoop<
   let dispatchOrdinal = 0;
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
-  const retainedErrorFiles: string[] = [];
+  // Each retained file with the leg directory it was written under: a leg filed
+  // under its ticket later in this call hands its files back at the final place.
+  type RetainedErrorFile = { readonly file: string; readonly runDirectory: string };
+  const retainedErrorFiles: RetainedErrorFile[] = [];
   const failedAttempts: Array<{
     attempt: number;
     diagnostic: string;
     decisiveFacts?: Readonly<Record<string, unknown>>;
-    errorFile?: string;
+    retained?: RetainedErrorFile;
   }> = [];
   let stoppedResult: T | undefined;
   let endReason: string | undefined;
@@ -367,8 +371,8 @@ export async function runWithAutoResumeLoop<
         return undefined;
       });
       if (retained !== undefined) {
-        retainedErrorFiles.push(retained.file);
-        failedAttempt.errorFile = retained.file;
+        failedAttempt.retained = { file: retained.file, runDirectory: options.admitted.runDirectory };
+        retainedErrorFiles.push(failedAttempt.retained);
         await besidePresentation(options.admitted.runDirectory, options.io, "dispatch error pointer", () => options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${retained.file}\n`,
         ));
@@ -432,6 +436,8 @@ export async function runWithAutoResumeLoop<
     }
   }
 
+  const atFinalPlace = ({ file, runDirectory }: RetainedErrorFile): string =>
+    rewriteRunDirectoryPathValue(file, runDirectory, options.admitted.runDirectory) as string;
   // The loop's own terminal is in hand: finishing steps keep it (ADR 0080).
   let terminal = stoppedResult?.terminal;
   if (stoppedResult === undefined) {
@@ -439,7 +445,7 @@ export async function runWithAutoResumeLoop<
       role: options.admitted.role,
       runDirectory: options.admitted.runDirectory,
       causeError: lastThrownError,
-      errorFiles: retainedErrorFiles,
+      errorFiles: retainedErrorFiles.map(atFinalPlace),
       autoResumeAttempts,
       endReason: endReason!,
       everyAttemptThrew,
@@ -451,7 +457,11 @@ export async function runWithAutoResumeLoop<
   const complete: TerminalResult | undefined = terminal !== undefined && failedAttempts.length > 0
     ? { ...terminal, roleOutcome: {
       ...terminal.roleOutcome,
-      decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
+      decisiveFacts: {
+        ...terminal.roleOutcome.decisiveFacts,
+        failedAttempts: failedAttempts.map(({ retained, ...attempt }) =>
+          retained === undefined ? attempt : { ...attempt, errorFile: atFinalPlace(retained) }),
+      },
     } } as TerminalResult
     : terminal;
   // The seat selects its accepted volume after routing; other stops are final here.

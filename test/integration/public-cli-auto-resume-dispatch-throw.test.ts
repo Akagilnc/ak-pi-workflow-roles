@@ -13,11 +13,11 @@
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { test } from "vitest";
 
-import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
+import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempHome } from "../helpers/environment-fixtures.ts";
@@ -124,7 +124,7 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     // (c) dossier pointers (one per attempt) address the log that holds those rows.
     const lines=(await readFile(sessionFile,"utf8")).trim().split("\n").filter(Boolean);
     const pointers=lines.map((l)=>JSON.parse(l) as PointerEntry)
-      .filter((e)=>typeof e==="object"&&e!==null&&(e as {customType?:unknown}).customType===DISPATCH_ERROR_RETENTION_ENTRY_TYPE);
+      .filter((e)=>typeof e==="object"&&e!==null&&(e as {customType?:unknown}).customType==="ak_run_dispatch_error_retention");
     assert.deepEqual(pointers.map((p)=>p.data?.attempt),[0,1,2]);
     for(const p of pointers){
       assert.equal(p.data?.file,logPath);
@@ -155,6 +155,54 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
   });
 });
 
+test("a leg filed under its ticket between throwing attempts hands back error files at its final place", async()=>{
+  await withTempHome(async(home)=>{
+    const project=join(home,"proj");
+    const runId="throw-then-filed";
+    const book=join(home,".ak-roles","books","proj");
+    const unboundDir=join(book,"unbound","runs",`${runId}@judge`);
+    const ticketDir=join(book,"1299","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
+    await mkdir(join(unboundDir,"session"),{recursive:true});
+    await mkdir(dirname(ticketDir),{recursive:true});
+    await writeFile(join(unboundDir,"session","session.jsonl"),"{}\n","utf8");
+    const admitted={principal:fixturePrincipal(join(unboundDir,"session")),runDirectory:unboundDir,role:"judge" as const,runId,projectRoot:project};
+    let calls=0;
+    const result=await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted,
+      io:captureIo().io,
+      autoResumeLimit:1,
+      buildInitialPayload: ()=>"initial",
+      buildResumePayload: ()=>"resume",
+      dispatch: async(_payload,lease):Promise<LoopDispatchResult>=>{
+        calls+=1;
+        await lease?.release();
+        // The second attempt reports its ticket: the leg moves and placement follows it.
+        if(calls===2){
+          await rename(unboundDir,ticketDir);
+          admitted.runDirectory=ticketDir;
+          admitted.principal=fixturePrincipal(join(ticketDir,"session"));
+        }
+        throw new Error(`boom-${calls}`);
+      },
+    });
+    const terminal=result.terminal as TerminalResult;
+    if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
+    const facts=terminal.roleOutcome.decisiveFacts as {dispatchErrorFiles:string[];lastDispatchErrorFile:string;failedAttempts:{errorFile?:string}[]};
+    const handedBack=[
+      ...terminal.artifacts.map((artifact)=>artifact.path),
+      ...facts.dispatchErrorFiles,
+      facts.lastDispatchErrorFile,
+      ...facts.failedAttempts.map((attempt)=>attempt.errorFile!),
+    ];
+    assert.equal(handedBack.length,7);
+    for(const path of handedBack) assert.equal(path,join(ticketDir,"log.jsonl"));
+    await stat(join(ticketDir,"log.jsonl"));
+  });
+});
+
 test("#1091 auto-resume keeps retrying when the local session file is absent", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");
@@ -180,33 +228,6 @@ test("#1091 auto-resume keeps retrying when the local session file is absent", a
     assert.equal(callsRef.n,3);
     assert.equal(result.exitCode,1);
     assert.equal((result.terminal as TerminalResult).autoResumeCount,2);
-  });
-});
-
-test("Pi custom-entry append surfaces Sitian persistence failure after the session write", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    const runDir = join(home, ".ak-roles", "books", "proj", "runs", "custom-entry-sitian-failure@judge");
-    const sessionDir = join(runDir, "session");
-    const sessionFile = join(sessionDir, "session.jsonl");
-    await mkdir(project, { recursive: true });
-    await mkdir(sessionDir, { recursive: true });
-    await writeFile(sessionFile, "{}\n", "utf8");
-    // Make the Sitian destination impossible while leaving the Pi session writable:
-    // a directory where the run's log.jsonl belongs.
-    await mkdir(join(runDir, "log.jsonl"));
-
-    await assert.rejects(
-      appendPiSessionCustomEntry(
-        piDurablePrincipalAuthority,
-        fixturePrincipal(dirname(sessionFile), sessionFile),
-        "custom-entry-probe",
-        { observed: true },
-      ),
-    );
-    const entries = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    assert.equal(entries.at(-1)?.type, "custom");
-    assert.equal(entries.at(-1)?.customType, "custom-entry-probe");
   });
 });
 

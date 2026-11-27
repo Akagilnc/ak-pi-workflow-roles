@@ -1,10 +1,9 @@
-import { historyPayloads, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
-import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
 import assert from "node:assert/strict";
@@ -21,8 +20,7 @@ import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-c
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { ATTEMPT_HISTORY_ENTRY_TYPE, exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
-import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
+import { exitCodeForTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import {
@@ -488,26 +486,15 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.autoResumeCount, 1);
 
-    // Settlement must not append to the host's native session; both attempts
-    // remain readable in the run's append-only history.jsonl after resume.
+    // The retried host failure keeps its error terminal row (#1299).
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const runDirectory =
       (await findRunDirectoryById(home, "run-419-pointer-overwrite-001"))
       ?? join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-419-pointer-overwrite-001@judge");
-    const liveSessionFile = sessionFileOf(runDirectory);
-    const hostRows = (await readFile(liveSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
-    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
-    const history = historyPayloads<{
-      type?: string; outcome?: { kind?: string; diagnostic?: string };
-    }>(runDirectory, "attempt-history");
-    assert.equal(history.length, 1);
-    assert.equal(history[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
-    assert.equal(history[0]?.outcome?.kind, "failure", "failed leg's complete result is retained");
-    assert.ok(typeof history[0]?.outcome?.diagnostic === "string" && history[0].outcome.diagnostic !== "");
+    const terminals = statePayloads<{ face?: string; body?: { diagnostic?: string } }>(runDirectory, "terminal");
+    assert.deepEqual(terminals.map((terminal) => terminal.face), ["error"], "failed attempt's error row is retained");
+    assert.ok(typeof terminals[0]?.body?.diagnostic === "string" && terminals[0].body.diagnostic !== "");
 
-    // The terminal section is a last-write-wins view of the final accepted attempt.
-    const report = terminalBodyAt(join(runDirectory, "current.json"), "report") as { outcome?: TerminalRoleOutcome };
-    assert.equal(report.outcome?.kind, "accepted");
     // #836: the role's original payload, not an invented top-level status, is what
     // history.jsonl kept.
     assert.deepEqual(submittedParams(runDirectory).map((params) => (params as { status?: string }).status), ["converged"]);
