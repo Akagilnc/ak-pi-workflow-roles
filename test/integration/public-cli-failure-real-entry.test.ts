@@ -1,4 +1,4 @@
-import { historyPayloads, statePayloads, terminalBodyAt, lockCurrentJson, unlockCurrentJson, runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, terminalBodyAt, lockStateRows, unlockStateRows, runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
@@ -34,18 +34,17 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 
 test.each([
-  { step: "terminal publication", seat: "collector", failing: "collector" },
+  { step: "run-state persistence", seat: "collector", failing: "collector" },
   { step: "afterDispatch", seat: "collector", failing: "collector" },
-  { step: "terminal publication", seat: "judge", failing: "auditor" },
+  { step: "run-state persistence", seat: "judge", failing: "auditor" },
 ] as const)("public $step failure of $failing stays beside the accepted terminal and reaches the caller", async ({ step, seat, failing }) => {
-  // After the seal, either the terminal write (current.json locked) or the
+  // After the seal, either the run-state write (state.jsonl locked) or the
   // ticket placement (the leg's progress staging taken by a directory) fails —
   // on the called seat, or on a gate officer it summoned in the same call.
   // The host already accepted; that terminal stays, and the caller is told the
   // cause the dossier keeps — from the first call's quiet attempt io and from a
   // quiet nested seat too.
-  // Collector: a seat with no gate officers, so the terminal write is the only
-  // dossier write between the turn and the leg's own lawful persist.
+  // Collector: a seat with no gate officers.
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -98,8 +97,8 @@ test.each([
           cwd: project,
           credentials: { "openai-codex": true, xai: false },
           createRunId: () => runId,
-          // Bind up front so relocation cannot race the post-seal current.json lock;
-          // the intended failure is terminal render EACCES.
+          // Bind up front so relocation cannot race the post-seal state.jsonl lock;
+          // the intended failure is the run-state append EACCES.
           boundTicketNumber: 1171,
           io,
           roleTurnHost: {
@@ -107,13 +106,13 @@ test.each([
               const out = await inner.executeTurn(request);
               if (request.activation.role !== failing) return out;
               failingRun = request.runDirectory;
-              // The seal is on the record; the leg's terminal write and placement are next.
+              // The seal is on the record; the leg's run-state write and placement are next.
               if (step === "afterDispatch") {
                 mkdirSync(join(request.runDirectory, "progress.jsonl"), { recursive: true });
                 return out;
               }
-              lockedCurrent = join(request.runDirectory, "current.json");
-              lockCurrentJson(dirname(lockedCurrent));
+              lockedCurrent = join(request.runDirectory, "state.jsonl");
+              lockStateRows(dirname(lockedCurrent));
               return out;
             },
           },
@@ -129,16 +128,12 @@ test.each([
       // Delivery, not wording: the caller was handed the fault on stderr.
       assert.ok(stderr.join("").length > 0, "the caller is told the fault");
       if (step === "afterDispatch") return;
-      // The injected failure really fired: the accepted terminal FACT is a history
-      // row, but its rendering was refused (current.json is still the planted directory).
-      const recorded = statePayloads<{ face?: string }>(runDirectory, "terminal");
-      assert.equal(recorded.length, 1);
-      assert.equal(recorded[0]!.face, "report");
-      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
+      // The injected failure really fired: the run-state never reached terminal.
+      assert.notEqual(statePayloads<{ state?: string }>(runDirectory, "run-state").at(-1)?.state, "terminal");
     } finally {
       if (lockedCurrent !== undefined) {
         try {
-          unlockCurrentJson(dirname(lockedCurrent));
+          unlockStateRows(dirname(lockedCurrent));
         } catch {
           // cleanup best-effort
         }

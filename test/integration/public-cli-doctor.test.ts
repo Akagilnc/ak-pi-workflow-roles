@@ -1,4 +1,4 @@
-import { reportedReceipts, historyPayloads, statePayloads, lockCurrentJson, readCurrentSection, sessionFaultNotes, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, historyPayloads, statePayloads, lockStateRows, readStatePage, sessionFaultNotes, submittedParams, terminalBodyAt, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -104,7 +104,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
+    const persisted = readStatePage(admitted.runDirectory, "admitted") as {
       role: string;
       issueNumber: number;
       caseRunsPath: string;
@@ -379,7 +379,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.deepEqual(reportedReceipts(completed.terminal!), [candidateDetails]);
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
-    const runState = readCurrentSection(
+    const runState = readStatePage(
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor"),
       "runState",
     ) as { state: string };
@@ -644,39 +644,31 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
 /**
  * Real run-state seam: the facade admitted the run and the coordinator already
  * marked it running; once the doctor turn has recorded its submission, damage
- * either the file that carries the run's facts (`rows`: state.jsonl holds the run-state
- * row, as main's run-state.json held it) or only its rendering (`rendering`:
- * current.json). The accepted doctor terminal stays; the refusals are package notes.
+ * the file that carries the run's facts (state.jsonl holds the run-state row, as
+ * main's run-state.json held it). The refusals are package notes.
  * No production hook, no direct markRunTerminal call.
  */
-function poisonAfterTurn(mode: "rows" | "rendering", runDirectory: string, inner: RoleTurnHost): RoleTurnHost {
+function poisonAfterTurn(runDirectory: string, inner: RoleTurnHost): RoleTurnHost {
   return {
     executeTurn: async (request) => {
       const out = await inner.executeTurn(request);
       if (request.activation.role === "doctor") {
-        if (mode === "rendering") {
-          lockCurrentJson(runDirectory);
-        } else {
-          await rm(join(runDirectory, "state.jsonl"), { force: true });
-          await mkdir(join(runDirectory, "state.jsonl"));
-        }
+        await rm(join(runDirectory, "state.jsonl"), { force: true });
+        await mkdir(join(runDirectory, "state.jsonl"));
       }
       return out;
     },
   };
 }
 
-for (const mode of ["rows", "rendering"] as const) {
-test(mode === "rows"
-  ? "terminal persistence failure is noted and the auditor read of that run is not delivered as success"
-  : "terminal rendering failure is noted; the mandatory auditor still reads the recorded facts and the accepted doctor is delivered", async () => {
+test("terminal persistence failure is noted and the auditor read of that run is not delivered as success", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
     await seedDoctorIssueRuns(home, bookKey, 41);
-    const runId = `run-doctor-terminal-write-fail-${mode}`;
+    const runId = "run-doctor-terminal-write-fail-rows";
     // Bind up front so fault injection targets a stable terminal path, not relocation.
     const runDirectory = join(
       home,
@@ -687,10 +679,9 @@ test(mode === "rows"
       `${runId}@doctor`,
     );
     const captured = captureIo();
-    // The accepted Doctor payload is the terminal. The current.json read failure
-    // is a note beside it. This run records a real submission (sealedAcceptance)
-    // before current.json is occupied. The assertion checks those bytes.
-    // Mandatory auditor still runs; the note is not a substitute for that gate.
+    // This run records a real submission (sealedAcceptance) before state.jsonl is
+    // occupied. The assertion checks those bytes. Mandatory auditor still runs;
+    // the note is not a substitute for that gate.
     await configurePassingReviewSeats(home);
     let recordedDetails: unknown;
     const result = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "41", "--project", project, "inspect"],
@@ -702,7 +693,7 @@ test(mode === "rows"
         createRunId: () => runId,
         boundTicketNumber: 1171,
         io: captured.io,
-        roleTurnHost: withPassingReviewHost(poisonAfterTurn(mode, runDirectory, roleTurnHostFromLegacyPiRunner({
+        roleTurnHost: withPassingReviewHost(poisonAfterTurn(runDirectory, roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
@@ -741,26 +732,13 @@ test(mode === "rows"
       },
     );
 
-    if (mode === "rows") {
-      // The run-state fact cannot be read from its damaged row file at persist (noted); the
-      // mandatory auditor then has to read that same run. That read is part of the audit,
-      // so the command must not deliver the parent as accepted.
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.terminal, undefined);
-    } else {
-      // current.json is only a rendering of the rows. Occupying it refuses the run-state and
-      // terminal renderings (each a note beside the host terminal) but the facts are rows, so
-      // the mandatory auditor reads the run's admitted fact from them, passes, and the
-      // accepted doctor terminal is delivered.
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(result.terminal?.roleOutcome.role, "doctor");
-      assert.deepEqual(statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face), ["report"]);
-      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true, "the injected refusal really held");
-    }
+    // The run-state fact cannot be read from its damaged row file at persist (noted); the
+    // mandatory auditor then has to read that same run. That read is part of the audit,
+    // so the command must not deliver the parent as accepted.
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal, undefined);
     const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
     assert.ok(typeof noteText === "string" && noteText !== "");
     assert.ok((await readRecordedSubmissionRows(project, runId, home)).rows.some((row) => row.kind === "accepted"));
   });
 });
-}

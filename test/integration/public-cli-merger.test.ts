@@ -1,4 +1,4 @@
-import { reportedReceipts, readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, readStatePage, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -150,7 +150,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     assert.deepEqual([...input.resolutionScope], [fixture.conflictPath]);
     assert.equal(input.attemptId, "run-merger-admit-001");
     // Durable admitted identity retains adapter-derived envelope facts (not caller packet fields).
-    const persisted = readCurrentSection(admitted.runDirectory, "admitted") as {
+    const persisted = readStatePage(admitted.runDirectory, "admitted") as {
       instruction: string;
       derived: { targetObjectId: string };
     };
@@ -291,7 +291,7 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       const submitted = reportedReceipts(result.terminal!) as ReadonlyArray<{ report?: string }>;
       assert.equal(submitted[0]?.report, "resolved");
       // The derived merge facts are the admitted section's own record.
-      const evidence = readCurrentSection(dirname(dirname(reportRef.path)), "admitted") as {
+      const evidence = readStatePage(dirname(dirname(reportRef.path)), "admitted") as {
         derived: {
           targetObjectId: string;
           sourceObjectId: string;
@@ -357,7 +357,7 @@ test("ak-role resume continues merger with exact session", async () => {
       `${runId}@merger`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
-    const admitted = readCurrentSection(runDirectory, "admitted") as { role: string; mergerInputPath: string; ticketNumber?: number };
+    const admitted = readStatePage(runDirectory, "admitted") as { role: string; mergerInputPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "merger");
     assert.equal(admitted.ticketNumber, 1201);
 

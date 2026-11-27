@@ -44,10 +44,9 @@ import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   historyPayloads,
-  lockCurrentJson,
-  readCurrentJson,
-  readCurrentSection,
-  seedCurrentSection,
+  lockStateRows,
+  readStatePage,
+  seedStatePage,
 } from "../helpers/run-dossier-fixture.ts";
 import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
@@ -70,27 +69,6 @@ import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.t
 import { isRecord } from "../../src/unknown-value.ts";
 
 const TICKET = 1171;
-
-/** #1183: current.json location fields match the live run directory. */
-function assertCurrentLocationPaths(runDirectory: string, label: string): void {
-  const current = readCurrentJson(runDirectory);
-  const expectedSessionDirectory = sessionDirectoryOf(runDirectory);
-  const expectedSessionFile = sessionFileOf(runDirectory);
-  for (const section of ["invocation", "admitted", "runState"] as const) {
-    const page = current[section];
-    assert.ok(page !== undefined && typeof page === "object" && page !== null, `${label}: ${section}`);
-    const record = page as Record<string, unknown>;
-    assert.equal(record.runDirectory, runDirectory, `${label}: ${section}.runDirectory`);
-    assert.equal(existsSync(String(record.runDirectory)), true, `${label}: ${section}.runDirectory exists`);
-    if (typeof record.sessionDirectory === "string") {
-      assert.equal(record.sessionDirectory, expectedSessionDirectory, `${label}: ${section}.sessionDirectory`);
-      assert.equal(existsSync(record.sessionDirectory), true, `${label}: sessionDirectory exists`);
-    }
-    if (typeof record.sessionFile === "string") {
-      assert.equal(record.sessionFile, expectedSessionFile, `${label}: ${section}.sessionFile`);
-    }
-  }
-}
 
 const FIXER_DONE = {
   status: "completed",
@@ -207,22 +185,10 @@ function envelopeHostThatReportsThen(input: {
 /**
  * Pi seam: open native SessionManager, reportTicket → setSessionFile, later
  * appends land under ticket; submit writes the new session path (never revive unbound).
- *
- * `refuseDerivedRender`: plant EISDIR on the still-unbound leaf at seal (pre-rename
- * commit). Rename carries the poison; post-rename render refuses at the same external
- * fault regardless of when setSessionFile runs (#1171 F6-R3 / F4-R2).
  */
 function piHostThatReportsThenSubmits(input: {
   readonly ticketNumber: number;
   readonly onAfterReport?: (paths: { oldSession: string; newSession: string }) => void;
-  readonly refuseDerivedRender?: true;
-  readonly onReportOutcome?: (observed: {
-    threw: boolean;
-    code?: string | undefined;
-    contextRunDirectory?: string | undefined;
-    sessionFile?: string | undefined;
-    appendOk?: boolean | undefined;
-  }) => void;
 }) {
   return roleTurnHostFromLegacyPiRunner({
     packageRoot,
@@ -254,61 +220,8 @@ function piHostThatReportsThenSubmits(input: {
         },
         abort() {},
       };
-      const authority = input.refuseDerivedRender === true
-        ? {
-            ...piDurablePrincipalAuthority,
-            seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
-              // Relocate seals the ticket target before rename; admitted construction
-              // seals the still-unbound path. Plant only on the relocate seal so bind
-              // can render, then rename carries the poison to post-rename render.
-              const live = context.runDirectory;
-              const targetRun = runDirectoryFromSessionDirectory(coordinates.sessionDirectory);
-              if (
-                live !== undefined
-                && isUnboundRunDirectory(live)
-                && !isUnboundRunDirectory(targetRun)
-              ) {
-                lockCurrentJson(live);
-              }
-              return piDurablePrincipalAuthority.seal(coordinates);
-            },
-          }
-        : piDurablePrincipalAuthority;
-      const priorAmbient = process.env.AK_ROLE_RUN_DIR;
-      if (input.refuseDerivedRender === true) {
-        process.env.AK_ROLE_RUN_DIR = runDirectory;
-      }
-      try {
-        const reported = await reportTicketFromHostContext(context, input.ticketNumber, authority);
-        assert.equal(reported.relocated, true);
-        input.onReportOutcome?.({
-          threw: false,
-          contextRunDirectory: context.runDirectory,
-          sessionFile: sessionManager.getSessionFile(),
-        });
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        let appendOk = false;
-        try {
-          sessionManager.appendCustomEntry("ak_1171_f4r2_after_render_refuse", { ok: true });
-          appendOk = true;
-        } catch {
-          appendOk = false;
-        }
-        input.onReportOutcome?.({
-          threw: true,
-          code,
-          contextRunDirectory: context.runDirectory,
-          sessionFile: sessionManager.getSessionFile(),
-          appendOk,
-        });
-        throw error;
-      } finally {
-        if (input.refuseDerivedRender === true) {
-          if (priorAmbient === undefined) delete process.env.AK_ROLE_RUN_DIR;
-          else process.env.AK_ROLE_RUN_DIR = priorAmbient;
-        }
-      }
+      const reported = await reportTicketFromHostContext(context, input.ticketNumber, piDurablePrincipalAuthority);
+      assert.equal(reported.relocated, true);
       const nextRunDirectory = context.runDirectory;
       assert.ok(nextRunDirectory);
       // Host native: setSessionFile moves the file handle; getSessionDir stays the open dir.
@@ -347,13 +260,13 @@ async function seedUnboundChildWithStaging(input: {
   const childDir = join(dirname(input.parentDir), formatRunLeaf(input.childRunId, "diarist"));
   await mkdir(sessionDirectoryOf(childDir), { recursive: true });
   const identity = { bookKey: input.bookKey, projectRoot: input.project };
-  const parentAdmitted = readCurrentSection(input.parentDir, "admitted");
-  seedCurrentSection(input.parentDir, "admitted", {
+  const parentAdmitted = readStatePage(input.parentDir, "admitted");
+  seedStatePage(input.parentDir, "admitted", {
     ...parentAdmitted,
     childDiaristRunIds: [input.childRunId],
   });
-  seedCurrentSection(childDir, "invocation", { role: "diarist", runId: input.childRunId, ...identity });
-  seedCurrentSection(childDir, "admitted", { role: "diarist", runId: input.childRunId, ...identity });
+  seedStatePage(childDir, "invocation", { role: "diarist", runId: input.childRunId, ...identity });
+  seedStatePage(childDir, "admitted", { role: "diarist", runId: input.childRunId, ...identity });
   await writeFile(
     join(childDir, RUN_HISTORY_FILE),
     `${JSON.stringify({
@@ -424,44 +337,7 @@ test("#1171 pi SessionManager: report relocates; post-relocate append stays unde
       sessionEntries.some((row) => row.customType === "ak_1171_post_relocate"),
       true,
     );
-    assert.equal((readCurrentSection(live, "admitted") as { ticketNumber?: number }).ticketNumber, TICKET);
-  });
-});
-
-test("#1171 F4-R2 derived render refuse after rename keeps live handles on ticket path", async () => {
-  await withSeatProject(async ({ home, project, bookKey }) => {
-    const runId = "01a011710-0000-7000-8000-0000f4r2eis";
-    const unbound = unboundLeaf(home, bookKey, runId, "fixer");
-    const ticket = ticketLeaf(home, bookKey, TICKET, runId, "fixer");
-    let observed: {
-      threw: boolean;
-      code?: string | undefined;
-      contextRunDirectory?: string | undefined;
-      sessionFile?: string | undefined;
-      appendOk?: boolean | undefined;
-    } = { threw: false };
-    const roleTurnHost = withPassingReviewHost(
-      piHostThatReportsThenSubmits({
-        ticketNumber: TICKET,
-        refuseDerivedRender: true,
-        onReportOutcome: (outcome) => { observed = outcome; },
-      }),
-    );
-    const result = await runPublicInstructionSeat(
-      ["apply", "Report then derived render refuses."],
-      seatEnv(home, project, runId, "pi", roleTurnHost, { autoResumeLimit: 0 }),
-      captureIo().io,
-      "fixer",
-      (args) => parsePublicSeatArgv("fixer", args),
-    );
-    assert.equal(observed.threw, true, "derived render must keep the original I/O refuse");
-    assert.equal(observed.code, "EISDIR");
-    assert.equal(existsSync(unbound), false);
-    assert.equal(existsSync(ticket), true);
-    assert.equal(observed.contextRunDirectory, ticket);
-    assert.ok(observed.sessionFile?.startsWith(sessionDirectoryOf(ticket)));
-    assert.equal(observed.appendOk, true, "native SessionManager must follow setSessionFile after rename");
-    assert.notEqual(result.exitCode, 0, "real render refuse must not wash to exit 0");
+    assert.equal((readStatePage(live, "admitted") as { ticketNumber?: number }).ticketNumber, TICKET);
   });
 });
 
@@ -542,8 +418,6 @@ for (const caseRow of [
               unbound: existsSync(unboundLeaf(home, bookKey, caseRow.runId, "fixer")),
               ticket: existsSync(placement),
             };
-            // #1183: mid-turn current.json already tracks the ticket leaf.
-            assertCurrentLocationPaths(placement, `${caseRow.name} mid-turn`);
           },
         }),
       );
@@ -561,7 +435,6 @@ for (const caseRow of [
       assert.equal(existsSync(unboundLeaf(home, bookKey, caseRow.runId, "fixer")), false);
       const placement = ticketLeaf(home, bookKey, TICKET, caseRow.runId, "fixer");
       // #1183: settle (incl. no_receipt) keeps current location paths on the ticket leaf.
-      assertCurrentLocationPaths(placement, `${caseRow.name} after settle`);
       if (caseRow.expectKind === "no_receipt") {
         assert.ok(unboundAtStart !== undefined);
         const stateRaw = await readFile(join(placement, "state.jsonl"), "utf8");
@@ -603,11 +476,11 @@ for (const caseRow of [
             );
           }
           assert.equal(
-            (readCurrentSection(placement, "admitted") as { ticketNumber?: number }).ticketNumber,
+            (readStatePage(placement, "admitted") as { ticketNumber?: number }).ticketNumber,
             TICKET,
           );
           assert.equal(
-            (readCurrentSection(placement, "invocation") as { ticketNumber?: number }).ticketNumber,
+            (readStatePage(placement, "invocation") as { ticketNumber?: number }).ticketNumber,
             TICKET,
           );
         }
@@ -685,7 +558,7 @@ test("#1268 unbound submission stays accepted without opening another turn", asy
         const bound = action === "report";
         const leaf = bound ? ticketLeaf(home, bookKey, TICKET, runId, "reviewer") : unboundLeaf(home, bookKey, runId, "reviewer");
         assert.equal(existsSync(leaf), true);
-        assert.equal(readCurrentSection(leaf, "admitted")?.ticketNumber, bound ? TICKET : undefined);
+        assert.equal(readStatePage(leaf, "admitted")?.ticketNumber, bound ? TICKET : undefined);
         const subject = join(home, ".ak-roles", "books", bookKey, bound ? String(TICKET) : "unbound");
         const progress = readTicketProgressLines(subject);
         const rows = progress.filter((row) => row.receipt.startsWith(`runs/${formatRunLeaf(runId, "reviewer")}/`));
@@ -1352,8 +1225,6 @@ test("#1171 public resume after relocate reaches host on ticket path", async () 
     assert.ok(resumeSession?.startsWith(sessionDirectoryOf(live)));
     assert.equal(existsSync(unboundLeaf(home, bookKey, runId, "fixer")), false);
     assert.equal(resumed.admitted?.runDirectory, live);
-    // #1183: public resume keeps current.json location paths on the ticket leaf.
-    assertCurrentLocationPaths(live, "public resume after relocate");
   });
 });
 

@@ -43,7 +43,7 @@ import {
   withBusinessRepo,
   withAnalystHome as withTempHome,
 } from "../helpers/analyst-fixture-kit.ts";
-import { clearCurrentSection, seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
+import { clearStatePage, seedStatePage, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 /** Family sections are discovery-contributed — not on the A1 page envelope type. */
 type PageWithMetricFamilies = AnalystIssueMetricsPage & {
@@ -928,8 +928,8 @@ test("analyst B3 and B4 use the same receipt status when outcome status is absen
 test("analyst entry does not turn a malformed live run state into no-receipt", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
-    clearCurrentSection(runDirectory, "terminal");
-    // Same illegal value as the pre-move current.json runState: the string "{broken".
+    clearStatePage(runDirectory, "terminal");
+    // Same illegal value as the pre-#1161 runState page: the string "{broken".
     // Fact path is state.jsonl (#1161); do not change the failure shape into an object.
     appendFileSync(
       join(runDirectory, "state.jsonl"),
@@ -955,8 +955,8 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
 test("analyst entry does not turn an incomplete live run state into no-receipt", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
-    clearCurrentSection(runDirectory, "terminal");
-    seedCurrentSection(runDirectory, "runState", { state: "running" });
+    clearStatePage(runDirectory, "terminal");
+    seedStatePage(runDirectory, "runState", { state: "running" });
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);

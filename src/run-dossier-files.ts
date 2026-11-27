@@ -1,8 +1,7 @@
 /**
  * Names in a run directory (docs/dossier-topology.md, #1161). Constants only, so
- * the appender and the `current.json` renderer can both import them.
+ * the appender and the dossier readers can both import them.
  */
-export const RUN_CURRENT_FILE = "current.json" as const;
 export const RUN_HISTORY_FILE = "history.jsonl" as const;
 export const RUN_LOG_FILE = "log.jsonl" as const;
 export const RUN_STATE_FILE = "state.jsonl" as const;

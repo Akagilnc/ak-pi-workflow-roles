@@ -4,7 +4,7 @@
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
 import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
-import { historyPayloads, submittedParams, readCurrentJson, readCurrentSection, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, submittedParams, statePayloads, readStatePage, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -1742,7 +1742,7 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
       const { rows: submissions } = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
       assert.equal((readReceipt(submissions.at(-1)!) as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
-      const admitted = readCurrentSection(runDir, "admitted");
+      const admitted = readStatePage(runDir, "admitted");
       assert.equal(admitted.ticketNumber, TICKET);
     });
   }
@@ -1841,12 +1841,12 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
-      readCurrentJson(ticketPlacement.runDirectory).runState !== undefined,
+      statePayloads(ticketPlacement.runDirectory, "run-state").length > 0,
       true,
       `failure run must relocate under ticket with durable state at ${ticketPlacement.runDirectory}`,
     );
     assert.equal(
-      readCurrentJson(unboundPlacement.runDirectory).runState !== undefined,
+      statePayloads(unboundPlacement.runDirectory, "run-state").length > 0,
       false,
       "unbound must not keep the durable runState section after relocate",
     );

@@ -31,7 +31,7 @@ import {
   readHistoryRows,
   readRunLogRows,
   readStateRows,
-  readCurrentSection,
+  readStatePage,
 } from "../helpers/run-dossier-fixture.ts";
 import { payloadFacts, payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
 
@@ -223,7 +223,7 @@ function dossierKinds(runDirectory: string) {
 }
 
 function admittedFacts(runDirectory: string) {
-  const admitted = readCurrentSection(runDirectory, "admitted");
+  const admitted = readStatePage(runDirectory, "admitted");
   return {
     sourceRunPath: admitted.sourceRunPath,
     ticketNumber: admitted.ticketNumber,

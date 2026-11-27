@@ -13,7 +13,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { reportTicketFromHostContext } from "../../src/report-ticket-tool.ts";
-import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
 import { Type } from "typebox";
 import {
   createSubmissionLedgerHost,
@@ -160,7 +160,7 @@ test.each(["unbound", "bound", "inline"] as const)("ledger records raw params an
       async () => ({ content: [], details, terminate: true }),
     );
     for (const section of ["invocation", "admitted"] as const) {
-      seedCurrentSection(host.context.runDirectory!, section, {
+      seedStatePage(host.context.runDirectory!, section, {
         role: "judge", runId: "run-ledger", bookKey: "fixture", projectRoot: f.root,
         instruction: "Review the submission.",
       });

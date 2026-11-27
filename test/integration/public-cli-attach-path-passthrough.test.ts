@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readStatePage } from "../helpers/run-dossier-fixture.ts";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -98,7 +99,7 @@ test("#1165 --attach passes opaque path as-is; whitespace instruction retained; 
       home, ".ak-roles", "books", bookKey, "unbound", "runs",
       "run-attach-passthrough-001@judge",
     );
-    const current = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8")) as {
+    const current = { admitted: readStatePage(runDirectory, "admitted") } as unknown as {
       admitted: {
         instruction: string;
         instructionEmpty: boolean;
@@ -199,7 +200,7 @@ test("#1165 --request-manifest/--attach keep opaque values; host flag wires path
         home, ".ak-roles", "books", bookKey, "unbound", "runs",
         `${runId}@collector`,
       );
-      const current = JSON.parse(await readFile(join(runDirectory, "current.json"), "utf8")) as {
+      const current = { admitted: readStatePage(runDirectory, "admitted") } as unknown as {
         admitted: {
           instruction: string;
           requestManifestPath?: string;

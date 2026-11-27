@@ -27,7 +27,7 @@ import {
 } from "../../src/analyst-page.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { environmentFixtures, seedGitRepository, withPrimaryAwareCleanup, withProcessCwd, withTempRoot } from "../helpers/environment-fixtures.ts";
-import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 const test = base.extend(environmentFixtures);
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -119,7 +119,7 @@ async function writeReadableRun(input: {
   if (input.ticketNumber !== undefined) {
     invocation.ticketNumber = input.ticketNumber;
   }
-  seedCurrentSection(runDir, "invocation", invocation);
+  seedStatePage(runDir, "invocation", invocation);
   await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
   seedTerminal(runDir, "report", {
     role: input.role,
@@ -153,7 +153,7 @@ async function writeDamagedRun(input: {
   if (input.ticketNumber !== undefined) {
     invocation.ticketNumber = input.ticketNumber;
   }
-  seedCurrentSection(runDir, "invocation", invocation);
+  seedStatePage(runDir, "invocation", invocation);
   // Broken session JSONL — unreadable exclusion, not silent drop.
   await writeFile(join(runDir, "session", "session.jsonl"), "{not-json\n");
 }

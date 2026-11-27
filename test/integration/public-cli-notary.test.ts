@@ -2,7 +2,7 @@
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
  */
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readStatePage, seedStatePage } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import {
@@ -225,8 +225,8 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     await mkdir(sessionDirectory, { recursive: true });
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await writeFile(sessionFile, "\n", "utf8");
-    seedCurrentSection(runDirectory, "admitted", { role: inventedRole, runId });
-    seedCurrentSection(runDirectory, "runState", {
+    seedStatePage(runDirectory, "admitted", { role: inventedRole, runId });
+    seedStatePage(runDirectory, "runState", {
       runId,
       role: inventedRole,
       state: "terminal",
@@ -306,9 +306,9 @@ test("notary admits canonical ledger source-run by path; rejects project project
     assert.equal(await treeFingerprint(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project))), beforeProjection);
 
     // Locator consumes retained identity, not the full resumable run record.
-    const state = readCurrentSection(sourceRunPath, "runState");
+    const state = readStatePage(sourceRunPath, "runState");
     delete state.projectRoot;
-    seedCurrentSection(sourceRunPath, "runState", state);
+    seedStatePage(sourceRunPath, "runState", state);
     const identityOnly = await resolveNotarySourceRunLocator({
       projectRoot: project,
       sourceRun: sourceRunPath,

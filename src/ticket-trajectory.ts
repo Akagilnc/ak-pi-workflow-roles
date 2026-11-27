@@ -6,7 +6,7 @@
  *
  * Station resolution (four-layer fallback):
  *   1) terminating tool name inside the session (ak_<role>_output)
- *   2) current.json invocation role
+ *   2) invocation page role (its state.jsonl row)
  *   3) run-directory name heuristic
  *   4) unknown (still listed; never dropped)
  *
@@ -18,7 +18,7 @@
  * write does not advertise refresh. Regeneration faults surface the original
  * cause via handle.closed / stop(). Caller stops the handle.
  */
-import { readSectionSync } from "./run-dossier.ts";
+import { readPageSync } from "./run-dossier.ts";
 import { lstat, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -270,7 +270,7 @@ type InvocationInfo = {
 
 async function readInvocation(runDir: string): Promise<InvocationInfo | undefined> {
   try {
-    const parsed = readSectionSync(runDir, "invocation");
+    const parsed = readPageSync(runDir, "invocation");
     if (parsed === undefined) return undefined;
     const info: InvocationInfo = {};
     if (typeof parsed.role === "string" && parsed.role.trim()) info.role = parsed.role.trim();
@@ -640,7 +640,7 @@ ${stationBlocks || "<p data-empty=\"true\">no runs</p>"}
  * Factory board reuses this — no parallel receipt parser.
  *
  * Book-run attribution (#176 / #859): read typed `ticketNumber` from each run's
- * current.json invocation section under listBookRunDirectories (flat legacy `runs/` + subject-tree
+ * invocation page (state.jsonl row) under listBookRunDirectories (flat legacy `runs/` + subject-tree
  * `<ticket|unbound>/runs/`). Legacy `issues/<N>/runs` remains a read-only
  * compatibility entrance. Unbound runs never join a ticket.
  */
@@ -658,7 +658,7 @@ export type FlatRunTicketBinding = {
 
 /**
  * Book-level run index built once per lane/render and reused per ticket.
- * Pure derived view of book runs' current.json invocation sections — not a parallel ledger.
+ * Pure derived view of book runs' invocation pages — not a parallel ledger.
  */
 export type TicketTrajectoryBookIndex = {
   /** ticket number → runs bound via invocation ticketNumber. */

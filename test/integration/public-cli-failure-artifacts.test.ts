@@ -1,4 +1,4 @@
-import { reportedReceipts, historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockCurrentJson, unlockCurrentJson } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, historyPayloads, statePayloads, readHistoryRows, runLogPayloads, seedTerminal, sessionFaultNotes, terminalBodyAt, lockStateRows, unlockStateRows } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -114,12 +114,12 @@ test("terminal write failure is noted beside the host failure terminal and does 
             const runDir = runDirectoryFromSessionDirectory(sessionDir);
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-            // Refuse every later write to the dossier's current.json after the child
-            // failure is observed (an in-place rewrite fails on the file's own mode).
+            // Refuse every later page write to the dossier's state.jsonl after the child
+            // failure is observed (the append fails on the file's own mode).
             // Settlement must keep boom primary and still emit one Terminal — not
             // outer-catch EACCES alone.
-            currentJson = join(runDir, "current.json");
-            lockCurrentJson(dirname(currentJson));
+            currentJson = join(runDir, "state.jsonl");
+            lockStateRows(dirname(currentJson));
             return {
               code: 1,
               stderr: "Error: boom\n",
@@ -149,19 +149,15 @@ test("terminal write failure is noted beside the host failure terminal and does 
       const runDirectory = join(
         home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`,
       );
-      // The terminal FACT is recorded as a history row; only its rendering into
-      // current.json was refused (the name is still the planted directory).
-      const recorded = statePayloads<{ face?: string }>(runDirectory, "terminal");
-      assert.equal(recorded.length, 1);
-      assert.equal(recorded[0]!.face, "error");
-      assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true);
+      // The injected refusal really held: no terminal row was appended.
+      assert.deepEqual(statePayloads(runDirectory, "terminal"), []);
       // The refused write is a note beside the host terminal, in the run's session.
       const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
       assert.ok(typeof noteText === "string" && noteText !== "");
     } finally {
       if (currentJson !== undefined) {
         try {
-          unlockCurrentJson(dirname(currentJson));
+          unlockStateRows(dirname(currentJson));
         } catch {
           // cleanup best-effort
         }

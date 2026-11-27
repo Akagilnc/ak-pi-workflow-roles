@@ -869,7 +869,7 @@ async function settleCompletedHostTurn<
  * an escalated submission still carries the original role params. Later
  * receipts remain untouched; prose note/report is never consulted; this seam
  * does not adjudicate a ticket change. Runs in the public call's own process
- * (no role leg writes the run's current.json).
+ * (no role leg writes the run's pages).
  */
 async function bindSealedTicketNumber(admitted: AdmittedRoleInvocation, payloads: readonly unknown[]): Promise<void> {
   if (admitted.ticketNumber !== undefined) return;
@@ -1121,7 +1121,7 @@ export async function dispatchPostAdmissionTurn<
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }
     // Selected host axis rides the shared Host envelope for in-turn tools
-    // (detour usage ledger) — never a pre-spawn current.json reread.
+    // (detour usage ledger) — never a pre-spawn page reread.
     if (typeof env.host === "string" && env.host.trim() !== "") {
       turnRequest = { ...turnRequest, host: env.host.trim() };
     }

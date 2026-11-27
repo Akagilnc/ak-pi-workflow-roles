@@ -5,7 +5,7 @@ import {
   roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
-import { readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { readStatePage, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -431,7 +431,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           resolveBookKeyFromGit(project),
           "unbound", "runs",
           "run-cli-coder-plan@coder",
-          "current.json",
+          "state.jsonl",
         ),
       );
     }
@@ -550,7 +550,7 @@ test("ak-role resume continues relocated coder plan phase and exact session", as
       `${runId}@coder`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
-    const admitted = readCurrentSection(runDirectory, "admitted") as {
+    const admitted = readStatePage(runDirectory, "admitted") as {
       phase: string; role: string; ticketNumber?: number;
     };
     assert.equal(admitted.role, "coder");
@@ -693,7 +693,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(captured!.includes("--thinking"), false);
       // invocation evidence: model identity is the override; thinking stays absent.
       const bookKey = resolveBookKeyFromGit(project);
-      const invocation = readCurrentSection(
+      const invocation = readStatePage(
         join(
           home,
           ".ak-roles",
@@ -758,7 +758,7 @@ test("bare --model provider/model dispatches without --thinking; suffix still pa
       assert.equal(captured![captured!.indexOf("--thinking") + 1], "high");
       // invocation evidence records provider/model and the supplied thinking level.
       const bookKey = resolveBookKeyFromGit(project);
-      const invocation = readCurrentSection(
+      const invocation = readStatePage(
         join(
           home,
           ".ak-roles",

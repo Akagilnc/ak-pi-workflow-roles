@@ -155,7 +155,7 @@ export function createEngineDetourToolDefinition(input: {
         : undefined;
       const runId = runDirectory === undefined ? undefined : runIdFromRunDirectory(runDirectory);
       // Public-invocation scope + selected host from Host envelope only — never
-      // courtAttemptId, never sidecar file, never pre-spawn current.json I/O.
+      // courtAttemptId, never sidecar file, never pre-spawn page I/O.
       const invocationScopeId =
         typeof ctx.invocationScopeId === "string" && ctx.invocationScopeId.trim() !== ""
           ? ctx.invocationScopeId.trim()

@@ -55,7 +55,7 @@ import {
 import {
   rewriteAdmittedRoleRunPage,
 } from "../role-run-relocation.ts";
-import { readPageSync, renderCurrentSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
+import { readPageSync, updateSectionSync, writeSectionSync } from "../run-dossier.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -356,7 +356,7 @@ export function issueAdmissionPlacement(
 }
 
 /**
- * Unique `admitted` section projection of current.json: top-level sessionDirectory/sessionFile
+ * Unique `admitted` page (its state.jsonl row): top-level sessionDirectory/sessionFile
  * (base wire shape). Memory Admitted keeps only the opaque principal — never dual-carry.
  */
 function writeAdmittedRequestPersistence(
@@ -398,7 +398,7 @@ function effectiveModelLedgerFields(
 export { homeFromRunDirectory };
 
 /**
- * Persist the `invocation` identity section of current.json for the public run.
+ * Persist the `invocation` identity page (a state.jsonl row) for the public run.
  * Admission is the sole source for every field; this is the only identity
  * projection and callers never provide an independent ledger shape.
  * When an effective model is known at admission, provider/model (and thinking
@@ -469,7 +469,7 @@ export async function recordEffectiveInvocationModel(
   });
 }
 
-/** Merge observed launch-time fields into the single existing invocation section of current.json. */
+/** Merge observed launch-time fields into the single existing invocation page. */
 async function mergeInvocationIdentityPage(
   runDirectory: string,
   fields: Record<string, unknown>,
@@ -615,16 +615,6 @@ async function relocateRegisteredChildDiarists(input: {
       relocateTicketProgressForLeg({
         runDirectory: childTarget.runDirectory,
       });
-      // Finished child legs will not settle again; refresh derived host.original
-      // after the rename commit. A derived render fault must not undo or block
-      // the committed placement (#1161 L1) — note and keep the true cause.
-      try {
-        renderCurrentSync(childTarget.runDirectory);
-      } catch (error) {
-        process.stderr.write(
-          `[invocation] current.json render refused after child relocate; placement kept: ${childTarget.runDirectory}: ${errorText(error)}\n`,
-        );
-      }
       continue;
     }
 
@@ -713,11 +703,6 @@ export async function relocateAdmittedRunToTicket(
 
   // After whole-leg rename + live-handle handoff: fill rounds and append ticket current.
   relocateTicketProgressForLeg({ runDirectory: target.runDirectory }, publishedRounds);
-
-  // current.json projects host.original from this run directory. Ownership is
-  // already transferred; a refuse still carries the true cause to the caller
-  // (#1161 L1) without leaving the leg under the unbound path.
-  renderCurrentSync(target.runDirectory);
 
   return { oldRunDirectory, newRunDirectory: target.runDirectory };
 }

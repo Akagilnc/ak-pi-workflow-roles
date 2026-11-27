@@ -104,8 +104,8 @@ export async function assertPublicFailureSettlement(input: {
     );
   }
 
-  // Durability via the typed artifact ref: it names the run's current.json, whose
-  // terminal section is the failure the caller was handed.
+  // Durability via the typed artifact ref: it names the run's state.jsonl, whose
+  // last terminal row is the failure the caller was handed.
   const errorRef = terminal.artifacts.find((a) => a.kind === "error");
   const errorBody = terminalBodyAt(errorRef!.path, "error") as {
     kind: string;

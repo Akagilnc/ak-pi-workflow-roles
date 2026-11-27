@@ -20,7 +20,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
 
 const R1B_TICKET = 1214;
 
@@ -41,8 +41,8 @@ async function prepareUnboundEnvelope(
     bookKey: "probe",
     projectRoot: packageRoot,
   };
-  seedCurrentSection(runDirectory, "invocation", identity);
-  seedCurrentSection(runDirectory, "admitted", identity);
+  seedStatePage(runDirectory, "invocation", identity);
+  seedStatePage(runDirectory, "admitted", identity);
   const socketPath = join(home, `mcp-${role}.sock`);
   const prepared = await prepareRoleEnvelope({
     request: {
@@ -281,8 +281,8 @@ test("#1214 R1b: diarist commitDiaristProjection I/O failure is round infrastruc
       projectRoot: packageRoot,
       ticketNumber: R1B_TICKET,
     };
-    seedCurrentSection(runDirectory, "invocation", identity);
-    seedCurrentSection(runDirectory, "admitted", identity);
+    seedStatePage(runDirectory, "invocation", identity);
+    seedStatePage(runDirectory, "admitted", identity);
     // Block the ticket records file so commit append cannot open it.
     await mkdir(join(bookRoot, String(R1B_TICKET), "records.jsonl"));
     const socketPath = join(home, "mcp-diarist-commit.sock");

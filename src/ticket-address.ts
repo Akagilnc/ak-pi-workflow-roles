@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { parseRunLeaf } from "./role-run-placement.ts";
+import { RUN_STATE_FILE } from "./run-dossier-files.ts";
 import { parseTicketNumber } from "./run-ticket-number.ts";
 import { readTicketProgressLines } from "./ticket-progress.ts";
 
@@ -52,8 +53,8 @@ export function parseTicketLegLocator(token: string): Required<TicketLegAddress>
  * reference names it). Without: the seat's most recently active leg under the
  * ticket, read off the leg directories themselves — rows exist only for accepted
  * receipts, so a leg that has not submitted yet is still found. Activity is the
- * leg directory's mtime: every turn takes and releases the leg's writer lease
- * there. One `runs/` listing and one stat per leg of the seat.
+ * mtime of the leg's state.jsonl: every turn appends its run-state rows there.
+ * One `runs/` listing and one stat per leg of the seat.
  */
 export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress): string {
   const ticketDirectory = join(bookDirectory, String(input.ticketNumber));
@@ -75,7 +76,7 @@ export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress):
   let latest: { readonly leaf: string; readonly mtimeMs: number } | undefined;
   for (const entry of existsSync(runsDirectory) ? readdirSync(runsDirectory, { withFileTypes: true }) : []) {
     if (!entry.isDirectory() || parseRunLeaf(entry.name)?.role !== input.seat) continue;
-    const { mtimeMs } = statSync(join(runsDirectory, entry.name));
+    const { mtimeMs } = statSync(join(runsDirectory, entry.name, RUN_STATE_FILE));
     if (
       latest === undefined
       || mtimeMs > latest.mtimeMs

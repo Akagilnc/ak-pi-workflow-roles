@@ -501,8 +501,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
       // Deliver already-written Pi host facts. Pi lands at session/session.jsonl;
-      // bind projects host.sessions; copy records the landing. Host adapters do
-      // not write current.json — public bind/settlement seams own that render.
+      // bind records the host session id; copy records the landing.
       try {
         await syncTurnRequestLivePlacement(request, config.principalAuthority);
         const { sessionFile, sessionDirectory } = config.principalAuthority.decode(request.principal);

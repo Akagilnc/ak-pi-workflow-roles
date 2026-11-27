@@ -1,6 +1,6 @@
 /**
  * Sole reader for gate-cycle facts of archived officer-pointer history rows
- * (decoded via readOfficerPointers; parent current.json no longer projects officers — #1195).
+ * (decoded via readOfficerPointers; #1195).
  *
  * Consumer: Analyst sole ledger scan (classifyScopedRun). Metric families must
  * not open a second disk scan — they consume retained facts.

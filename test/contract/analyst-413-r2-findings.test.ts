@@ -28,7 +28,7 @@ import {
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystCohortModeResult } from "../../src/analyst-cohort.ts";
 import { analystIssuePagePath } from "../../src/analyst-page.ts";
-import { seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 // ---- U1: malformed shapes rejected at the sole read boundary ----
 
@@ -88,7 +88,7 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       // One typed-ticketed run inside book root:foo.
       const runDir = join(ledgerHome, "books", "root:foo", "runs", `${RUN_ID}@coder`);
       mkdirSync(join(runDir, "session"), { recursive: true });
-      seedCurrentSection(runDir, "invocation", {
+      seedStatePage(runDir, "invocation", {
         role: "coder",
         runId: RUN_ID,
         bookKey: "root:foo",
@@ -170,7 +170,7 @@ test("U3: real book basename root:foo keeps its book scope through cohort cache-
       const seedReadable = (book: string, runId: string, rootIdentity: string) => {
         const runDir = join(ledgerHome, "books", book, "runs", `${runId}@coder`);
         mkdirSync(join(runDir, "session"), { recursive: true });
-        seedCurrentSection(runDir, "invocation", {
+        seedStatePage(runDir, "invocation", {
           role: "coder",
           runId,
           bookKey: book,

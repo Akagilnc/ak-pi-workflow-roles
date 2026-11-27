@@ -28,7 +28,7 @@ import {
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { withBusinessRepo, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 import { environmentFixtures, withTempRoot, withProcessCwd } from "../helpers/environment-fixtures.ts";
-import { seedCurrentSection, seedTerminal, readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage, seedTerminal, readStatePage } from "../helpers/run-dossier-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const test = base.extend(environmentFixtures);
@@ -78,7 +78,7 @@ async function seedBookTicketRun(input: {
     `${input.runId}@coder`,
   );
   await mkdir(join(runDir, "session"), { recursive: true });
-  seedCurrentSection(runDir, "invocation", {
+  seedStatePage(runDir, "invocation", {
     role: "coder",
     runId: input.runId,
     bookKey,
@@ -359,7 +359,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
           `${input.runId}@${input.role}`,
         );
         await mkdir(join(runDir, "session"), { recursive: true });
-        seedCurrentSection(runDir, "runState", {
+        seedStatePage(runDir, "runState", {
           runId: input.runId,
           role: input.role,
           state: input.state,
@@ -369,7 +369,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
           sessionDirectory: join(runDir, "session"),
           sessionFile: join(runDir, "session", "session.jsonl"),
         });
-        seedCurrentSection(runDir, "invocation", {
+        seedStatePage(runDir, "invocation", {
           role: input.role,
           runId: input.runId,
           bookKey,
@@ -503,7 +503,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
 
         // Package does not settle or delete for the caller.
         assert.equal(
-          readCurrentSection(deadDir, "runState").state,
+          readStatePage(deadDir, "runState").state,
           "running",
         );
       });

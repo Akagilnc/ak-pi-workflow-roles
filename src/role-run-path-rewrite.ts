@@ -1,7 +1,6 @@
 /**
  * Sole pure authority for typed run-directory path rewrite / projection.
- * No dossier I/O — run-dossier render and role-run-relocation both consume
- * this module (avoids a cycle through page readers).
+ * No dossier I/O (avoids a cycle through page readers).
  *
  * Scope is typed machine-consumed path fields only — never free text, never
  * caller file-flag path strings.
@@ -31,7 +30,6 @@ const PRINCIPAL_SESSION_PATH_FIELDS = [
 ] as const;
 
 const SOURCE_RUN_LOCATOR_FIELDS = ["runDirectory"] as const;
-const SUMMONS_PATH_FIELDS = ["sourceRunPath"] as const;
 
 /** Rewrite one path value that points at or under oldRunDirectory. */
 export function rewriteRunDirectoryPathValue(
@@ -121,23 +119,6 @@ export function rewriteSourceRunLocator(
   );
 }
 
-/** Same-ticket summons materials: typed source-run; caller attach paths stay as-is (#1165). */
-function rewriteSummonsMaterials(
-  value: unknown,
-  oldRunDirectory: string,
-  newRunDirectory: string,
-): void {
-  if (!isRecord(value)) return;
-  rewriteRunDirectoryPathFields(
-    value,
-    SUMMONS_PATH_FIELDS,
-    oldRunDirectory,
-    newRunDirectory,
-  );
-  rewriteSourceRunLocator(value.sourceRun, oldRunDirectory, newRunDirectory);
-  // #1165: summons.attachmentPaths are caller paths — do not rewrite.
-}
-
 /** Project one admitted page in memory after its containing run moved. */
 export function rewriteAdmittedRoleRunPage(
   page: Record<string, unknown>,
@@ -152,28 +133,4 @@ export function rewriteAdmittedRoleRunPage(
   );
   rewriteSourceRunLocator(page.sourceRun, oldRunDirectory, newRunDirectory);
   // #1165: admitted attachments are caller paths outside the run directory — do not rewrite.
-}
-
-/**
- * #1183: current.json location fields follow the directory being rendered.
- * Fact rows stay as written (append-only); only the rendering projects stored→actual.
- * Returns the same object when already aligned. Caller file-flag paths stay opaque.
- */
-export function projectRenderedPagePaths(
-  page: Record<string, unknown>,
-  actualRunDirectory: string,
-): Record<string, unknown> {
-  const stored =
-    typeof page.runDirectory === "string" && page.runDirectory.trim() !== ""
-      ? page.runDirectory
-      : undefined;
-  if (stored === undefined || stored === actualRunDirectory) return page;
-  const projected = structuredClone(page);
-  // Admitted field set is the location-field superset of invocation and runState;
-  // runState adds optional currentCourt summons under this run.
-  rewriteAdmittedRoleRunPage(projected, stored, actualRunDirectory);
-  if (isRecord(projected.currentCourt)) {
-    rewriteSummonsMaterials(projected.currentCourt.summons, stored, actualRunDirectory);
-  }
-  return projected;
 }

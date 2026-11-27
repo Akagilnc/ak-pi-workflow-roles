@@ -25,7 +25,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
-import { runLogPayloads, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { runLogPayloads, seedStatePage } from "../helpers/run-dossier-fixture.ts";
 
 /** Stage one pending attendance so session_shutdown will book a package entry. */
 function withStagedShutdownAttendance(
@@ -160,8 +160,8 @@ test("#959 durable flush failure outranks completed Doctor submission", async ()
       projectRoot: packageRoot,
       runDirectory,
     } as const;
-    seedCurrentSection(runDirectory, "admitted", durable);
-    seedCurrentSection(runDirectory, "invocation", durable);
+    seedStatePage(runDirectory, "admitted", durable);
+    seedStatePage(runDirectory, "invocation", durable);
     const base = createRoleRuntimeDependencies(packageRoot);
     const prepared = await prepareRoleEnvelope({
       request: {

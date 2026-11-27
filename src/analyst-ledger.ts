@@ -12,7 +12,7 @@
  * A2: classifyScopedRun retains typed per-run facts (frame span, tool intervals,
  * terminal face) for metric-family modules — no longer discarded after checks.
  */
-import { readSectionSync } from "./run-dossier.ts";
+import { readPageSync } from "./run-dossier.ts";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -134,7 +134,7 @@ async function classifyGhostCandidate(input: {
  * Invocation scope faces used for issue 圈定 (C4 / #399).
  * projectRoot is retained for narrow path match and conflict facts;
  * ticketNumber is the #176 typed face when present (integer ≥ 1).
- * Single read of the current.json invocation section — no second parse kernel.
+ * Single read of the invocation page (its last state.jsonl row) — no second parse kernel.
  */
 type InvocationScopeFields = {
   readonly projectRoot: string;
@@ -154,7 +154,7 @@ async function listLedgerBookNames(booksRoot: string): Promise<string[]> {
 async function readInvocationScopeFields(
   runDirectory: string,
 ): Promise<InvocationScopeFields | undefined> {
-  const parsed = readSectionSync(runDirectory, "invocation");
+  const parsed = readPageSync(runDirectory, "invocation");
   if (parsed === undefined) return undefined;
   if (typeof parsed.projectRoot !== "string" || parsed.projectRoot.trim() === "") {
     return undefined;
@@ -205,7 +205,7 @@ async function resolveSessionFile(
   runDirectory: string,
 ): Promise<string> {
   // Prefer invocation.sessionFile when present; fall back to S-family principal.
-  const parsed = readSectionSync(runDirectory, "invocation");
+  const parsed = readPageSync(runDirectory, "invocation");
   if (parsed !== undefined && typeof parsed.sessionFile === "string" && parsed.sessionFile.trim() !== "") {
     return typeof parsed.runDirectory === "string"
       ? rewriteRunDirectoryPathValue(parsed.sessionFile, parsed.runDirectory, runDirectory) as string

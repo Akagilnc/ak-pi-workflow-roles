@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readStatePage } from "../helpers/run-dossier-fixture.ts";
 import { access, readFile, realpath, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
@@ -462,7 +462,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
         "runs",
         `${scenario.runId}@${scenario.role}`,
       );
-      const ledger = readCurrentSection(runDirectory, "invocation");
+      const ledger = readStatePage(runDirectory, "invocation");
       assert.equal(ledger.role, scenario.role);
       assert.equal(ledger.runId, scenario.runId);
       assert.equal(ledger.bookKey, bookKey);

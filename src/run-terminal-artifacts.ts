@@ -1,5 +1,5 @@
 /**
- * The leg's terminal: the `terminal` section of current.json (#1161), written
+ * The leg's terminal: the last `terminal` row of state.jsonl (#1161), written
  * whole by settlement, last write wins. `report` = an accepted / escalated
  * receipt, `error` = a controlled failure, `no_receipt` = the leg ended with no
  * accepted receipt (#836). The reader only checks presence and structural
@@ -9,7 +9,7 @@
 import { basename } from "node:path";
 
 import { parseRunLeaf } from "./role-run-placement.ts";
-import { readHistoryRowsSync, readSectionSync, writeSectionSync } from "./run-dossier.ts";
+import { readHistoryRowsSync, readPageSync, writeSectionSync } from "./run-dossier.ts";
 
 import { isRecord } from "./unknown-value.ts";
 
@@ -51,10 +51,10 @@ export function writeRunTerminal(
 /**
  * Read the leg's terminal. Minimum producer-owned face: a typed object body
  * with a nonblank `role` (ADR 0043); anything else is unreadable. Absence is a
- * valid no-receipt state. A damaged current.json throws.
+ * valid no-receipt state. A damaged state.jsonl throws.
  */
 export function readRunTerminal(runDirectory: string): RunTerminalRead {
-  const terminal = readSectionSync(runDirectory, "terminal");
+  const terminal = readPageSync(runDirectory, "terminal");
   if (terminal === undefined) return { status: "absent" };
   const { face, body } = terminal;
   if (face !== "report" && face !== "error" && face !== "no_receipt") {

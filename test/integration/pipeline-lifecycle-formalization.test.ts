@@ -1,4 +1,4 @@
-import { reportedReceipts, readCurrentSection, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, readStatePage, submittedParams, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -92,13 +92,13 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     // ⑤: AK still owns settlement — a typed judge terminal is produced.
     assert.equal(result.terminal!.roleOutcome.role, "judge");
 
-    // ②: AK-owned current.json runState ledger reaches terminal regardless of the substituted host.
+    // ②: AK-owned run-state page reaches terminal regardless of the substituted host.
     const bookKey = resolveBookKeyFromGit(project);
     const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
     const runDirs = await readdir(runsRoot);
     const judgeRun = runDirs.find((name) => name.endsWith("@judge"));
     const runDirectory = join(runsRoot, judgeRun!);
-    const runState = readCurrentSection(runDirectory, "runState") as { state: string };
+    const runState = readStatePage(runDirectory, "runState") as { state: string };
     assert.equal(runState.state, "terminal", "AK-owned run-state must settle as terminal");
 
     // The report the caller opens is the accepted receipt itself (#1299): the

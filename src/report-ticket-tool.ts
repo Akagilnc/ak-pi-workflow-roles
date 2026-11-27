@@ -122,8 +122,7 @@ export async function reportTicketFromHostContext(
   if (!alreadyPlaced) {
     await bindAdmittedTicketNumber(admitted, ticketNumber);
   }
-  // Live handles belong with rename ownership — before derived renderCurrentSync
-  // (#1171 F4-R2). Reuse relocate's heldLease.relocate seam; keep raw I/O throw.
+  // Live handles belong with rename ownership (#1171 F4-R2). Reuse relocate's heldLease.relocate seam; keep raw I/O throw.
   const applyLiveHandles = (nextDirectory: string): void => {
     // Capture live session handle before ownership transfer. After relocate the
     // write handle must share host-authority coords with the principal (#1183):

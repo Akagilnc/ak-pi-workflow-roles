@@ -18,9 +18,9 @@ import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-le
 import {
   historyPayloads,
   statePayloads,
-  readCurrentSection,
-  lockCurrentJson,
-  unlockCurrentJson,
+  readStatePage,
+  lockStateRows,
+  unlockStateRows,
   runLogPayloads,
   sessionFaultNotes,
   RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
@@ -642,9 +642,9 @@ test("#637/#987 public inspector: resume continues open-court settlement without
       openCourtAttemptId,
       "no-seal this-court no_receipt must leave the open court",
     );
-    const admitted = JSON.parse(
-      await readFile(join(runDirectory, "current.json"), "utf8"),
-    ) as { admitted: { attachments: Array<{ path: string }> } };
+    const admitted = { admitted: readStatePage(runDirectory, "admitted") } as unknown as {
+      admitted: { attachments: Array<{ path: string }> };
+    };
     assert.deepEqual(
       admitted.admitted.attachments.map((a) => a.path),
       [external],
@@ -850,7 +850,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
   assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
   assert.deepEqual(firstHistory().map(row => (row.outcome as { kind: string }).kind), ["no_receipt"]);
   assert.equal(
-    (readCurrentSection(firstRunDirectory, "terminal") as { face?: string }).face,
+    (readStatePage(firstRunDirectory, "terminal") as { face?: string }).face,
     "no_receipt",
     "the leg's terminal is now this court's no_receipt (last write wins)",
   );
@@ -1239,7 +1239,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
   }
 });
 
-test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async ({ home }) => {
+test("#840 bounce class 1/2: page write failure after a real bare `ak-role resume` seal still delivers accepted, with the true cause durable in the dossier", async ({ home }) => {
   // Real public entry (not an internal dispatchPostAdmissionTurn call): a
   // bare `ak-role resume` that seals an open court is the one production path
   // where courtAttemptId is set and clearCurrentCourt actually runs.
@@ -1263,11 +1263,11 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     const seen: SeenTurn[] = [];
     let turn = 0;
     // The seal lands through the real ledger; the turn wrapper below then makes
-    // current.json read-only (an in-place rewrite of an existing file fails on its
-    // own mode, a read-only directory would not stop it), so the leg's terminal
-    // write is refused while reads and history.jsonl appends still work. The proof
-    // that the injection fired is structural, never the diagnostic's wording
-    // (#840 bounce class 2): the stale terminal face and the one dossier entry.
+    // state.jsonl read-only (an append to an existing file fails on its own mode,
+    // a read-only directory would not stop it), so the leg's later page writes are
+    // refused while reads and history.jsonl appends still work. The proof that the
+    // injection fired is structural, never the diagnostic's wording (#840 bounce
+    // class 2): the run-state that never reached terminal and the dossier entries.
     let sealingTurnArmed = false;
     const inner = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1295,8 +1295,8 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
           })(extraArgs, options);
         }
         // Bare resume of the still-open court seals it for the first time. The seal
-        // writes history.jsonl and current.json in the run directory, so the lock that
-        // makes the terminal write fail is applied by the host wrapper below, after
+        // writes history.jsonl and state.jsonl in the run directory, so the lock that
+        // makes the later page writes fail is applied by the host wrapper below, after
         // the seal landed. Armed only for this turn.
         sealingTurnArmed = turn === 3;
         // A later bare resume exits cleanly without submitting anything.
@@ -1312,8 +1312,8 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     const host: RoleTurnHost = {
       executeTurn: async (request) => {
         const out = await observed.executeTurn(request);
-        // The seal is on the record; now make the terminal write of current.json fail.
-        if (sealingTurnArmed) lockCurrentJson(dirname(currentJsonLocked));
+        // The seal is on the record; now make the later page writes of state.jsonl fail.
+        if (sealingTurnArmed) lockStateRows(dirname(currentJsonLocked));
         return out;
       },
     };
@@ -1332,7 +1332,7 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     assert.equal(first.exitCode, 0, "initial no-seal mint is still a lawful run");
     assert.equal(first.terminal?.roleOutcome.kind, "no_receipt", "nothing sealed yet — no stale accept to wash into a clear");
     const runDirectory = seen[0]!.runDirectory;
-    currentJsonLocked = join(runDirectory, "current.json");
+    currentJsonLocked = join(runDirectory, "state.jsonl");
 
     const opened = await runAkRole(["notary", "--source-run", scratch.firstSourcePath],
       {
@@ -1374,14 +1374,10 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     // field, not stdout presentation text).
     assert.equal(resumed.exitCode, 0, "terminal write failure after accepted settlement must not fail the command");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    // The injection really fired: the accepted terminal FACT is the last terminal
-    // row in history.jsonl (the earlier two legs left no_receipt rows), while its
-    // rendering was refused — current.json is still the planted directory.
-    const terminalFaces = statePayloads<{ face?: string }>(runDirectory, "terminal").map((terminal) => terminal.face);
-    assert.equal(terminalFaces.at(-1), "report", "the accepted terminal is recorded as a fact");
-    assert.equal(terminalFaces.slice(0, -1).every((face) => face === "no_receipt"), true);
-    assert.equal(statSync(join(runDirectory, "current.json")).isDirectory(), true,
-      "the injected terminal write failure must actually have been observed");
+    // The injection really fired: the court's run-state never reached terminal (the
+    // accepted terminal itself appends no row; the earlier two legs left no_receipt rows).
+    assert.notEqual(statePayloads<{ state?: string }>(runDirectory, "run-state").at(-1)?.state, "terminal");
+    assert.equal(statePayloads<{ face?: string }>(runDirectory, "terminal").every((terminal) => terminal.face === "no_receipt"), true);
 
     // The dossier is the single authoritative durable channel here (the
     // session it appends to is healthy, so no run-artifacts fallback file is
@@ -1393,39 +1389,17 @@ test("#840 bounce class 1/2: terminal write failure after a real bare `ak-role r
     const dossierEntries = sessionFaultNotes(sessionFile);
     assert.ok(dossierEntries.length > 0, "the refused writes are retained in the dossier");
     for (const entry of dossierEntries) assert.ok(typeof entry.diagnostic === "string" && entry.diagnostic !== "");
-    // #1199: ticket progress row lands (seal-time head) even when terminal render is refused.
+    // #1199: ticket progress row lands (seal-time head) even when the page writes are refused.
     const subject = subjectDirectoryOfRun(runDirectory);
     const progressRows = readTicketProgressLines(subject!);
     assert.ok(
       progressRows.some((row) => row.seat === "notary" && row.status === "converged"),
-      "ticket progress must land beside accepted even when terminal render fails",
-    );
-
-    // The court was delivered although its report did not render. Once the fault
-    // clears, a next bare resume that submits nothing does not claim that receipt.
-    unlockCurrentJson(runDirectory);
-    currentJsonLocked = "";
-    const next = await runAkRole(["resume", "637", "notary"], {
-      home,
-      packageRoot,
-      cwd: project,
-      credentials,
-      io,
-      roleTurnHost: host,
-    });
-    assert.equal(turn, 4);
-    assert.equal(next.terminal?.roleOutcome.kind, "no_receipt");
-    assert.equal(next.terminal?.receipts, undefined, "no receipt is this call's");
-    assert.equal(next.terminal?.submissions?.length, 1, "the leg's earlier submission is still presented");
-    assert.deepEqual(next.terminal?.submissions, resumed.terminal?.submissions);
-    assert.deepEqual(
-      readTicketProgressLines(subject!).filter((row) => row.seat === "notary").map((row) => row.round),
-      ["1"],
+      "ticket progress must land beside accepted even when the page writes fail",
     );
   } finally {
-    // The injected lock makes the run directory read-only; undo it so the scratch can go.
+    // The injected lock makes state.jsonl read-only; undo it so the scratch can go.
     if (currentJsonLocked !== "") {
-      try { unlockCurrentJson(dirname(currentJsonLocked)); } catch { /* lock never took hold */ }
+      try { unlockStateRows(dirname(currentJsonLocked)); } catch { /* lock never took hold */ }
     }
   }
 });

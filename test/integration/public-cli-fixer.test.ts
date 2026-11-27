@@ -28,7 +28,7 @@ import {
 import {
   packageRoot,
 } from "../helpers/pi-test-harness.ts";
-import { reportedReceipts, readCurrentSection, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, readStatePage, terminalBodyAt, submittedParams } from "../helpers/run-dossier-fixture.ts";
 import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
 import { withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -106,7 +106,7 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       const runDirectory =
         (await findRunDirectoryById(home, runId))
         ?? join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@fixer`);
-      const admitted = readCurrentSection(runDirectory, "admitted") as {
+      const admitted = readStatePage(runDirectory, "admitted") as {
         instruction: string;
         prerequisitesPath?: string;
       };
@@ -185,7 +185,7 @@ test("ak-role fixer defaults apply, preserves plan; opaque malformed prerequisit
       const planRunDirectory =
         (await findRunDirectoryById(home, "run-cli-fixer-plan"))
         ?? join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", "run-cli-fixer-plan@fixer");
-      await access(join(planRunDirectory, "current.json"));
+      await access(join(planRunDirectory, "state.jsonl"));
     }
 
     {
@@ -271,7 +271,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       `${runId}@fixer`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
-    const admitted = readCurrentSection(runDirectory, "admitted") as {
+    const admitted = readStatePage(runDirectory, "admitted") as {
       phase: string; role: string; ticketNumber?: number;
     };
     assert.equal(admitted.role, "fixer");

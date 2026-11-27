@@ -43,7 +43,7 @@ import {
   visibleTicketLabel,
   BoardSortElement,
 } from "../helpers/factory-board-shared.ts";
-import { seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -323,7 +323,7 @@ test("named closed tickets enter the board and remain drillable", async () => {
       })}\n`,
       "utf8",
     );
-    seedCurrentSection(join(books[0]!.ledgerDir, "issues", "99", "runs", "coder-x@demo"), "invocation", { role: "coder" });
+    seedStatePage(join(books[0]!.ledgerDir, "issues", "99", "runs", "coder-x@demo"), "invocation", { role: "coder" });
 
     const snapshot = sampleSnapshot();
     const roles = snapshot.books[0]!;
@@ -776,7 +776,7 @@ async function writeRunSession(
   const sessionPath = join(sessionDir, "session.jsonl");
   await writeFile(sessionPath, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
   if (options?.invocationRole) {
-    seedCurrentSection(join(ledgerDir, "issues", String(issueNumber), "runs", runId), "invocation", { role: options.invocationRole });
+    seedStatePage(join(ledgerDir, "issues", String(issueNumber), "runs", runId), "invocation", { role: options.invocationRole });
   }
   if (options?.axisLegs) {
     const legsDir = join(sessionDir, "reviewer-legs");

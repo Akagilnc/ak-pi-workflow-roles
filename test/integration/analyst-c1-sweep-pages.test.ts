@@ -14,7 +14,7 @@ import { test } from "vitest";
 import { runAnalyst } from "../../src/analyst-entry.ts";
 import type { AnalystIssueMetricsPage } from "../../src/analyst-page.ts";
 import { C1_ISSUE_ALPHA as ISSUE_ALPHA, C1_ALPHA_RUN, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
-import { clearCurrentSection, seedCurrentSection, seedTerminal } from "../helpers/run-dossier-fixture.ts";
+import { clearStatePage, seedStatePage, seedTerminal } from "../helpers/run-dossier-fixture.ts";
 
 // 太史 C1 sweep——页与索引写路径家族（#420 整改拆分第二片）。
 
@@ -114,8 +114,8 @@ test("analyst live run-state is not classified as terminal no-receipt", async ()
       `${C1_ALPHA_RUN}@coder`,
     );
     // Drop the prior terminal so live run-state is not classified via a leftover receipt.
-    clearCurrentSection(runDir, "terminal");
-    seedCurrentSection(runDir, "runState", {
+    clearStatePage(runDir, "terminal");
+    seedStatePage(runDir, "runState", {
       runId: C1_ALPHA_RUN,
       role: "coder",
       state: "running",

@@ -1,5 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { readCurrentSection, seedCurrentSection } from "../helpers/run-dossier-fixture.ts";
+import { readStatePage, seedStatePage } from "../helpers/run-dossier-fixture.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   withNestedTrueUnboundDiaristPiRunner,
@@ -45,7 +45,7 @@ function readRoleInvocation(
   runId: string,
   role: string,
 ): Record<string, unknown> {
-  return readCurrentSection(
+  return readStatePage(
     join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@${role}`),
     "invocation",
   );
@@ -783,7 +783,7 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
           sourceRun = coords.runDirectory;
           await mkdir(coords.sessionDirectory, { recursive: true });
           await writeFile(coords.sessionFile, "{}\n", "utf8");
-          seedCurrentSection(coords.runDirectory, "admitted", { role: "judge", runId: sourceRunId });
+          seedStatePage(coords.runDirectory, "admitted", { role: "judge", runId: sourceRunId });
           await writeRoleRunState(coords.runDirectory, {
             runId: sourceRunId,
             role: "judge",
