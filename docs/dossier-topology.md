@@ -65,7 +65,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `log.jsonl`——司天台流水
 
-只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件复制两次都失败时的 warning，带宿主原件路径）、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本。
+只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件复制两次都失败时的 warning，带宿主原件路径；Codex 找不到 rollout 时为 CLI 的 sessions 目录与会话 id）、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本。
 
 ### 宿主原件
 
@@ -87,7 +87,7 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 
 ## 经陛下允许多出来的项
 
-陛下 2026-10-03 逐字：「允许多出来」（本票施工会话，源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-worktree-roles-1161/6d409146-5717-4ff6-83cf-728f50533a24.jsonl`，对施工者列出的这三样的答复）。run 目录里上述五项之外保留：
+陛下 2026-10-03 逐字：「允许多出来」（本票施工会话，源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-worktree-roles-1161/6d409146-5717-4ff6-83cf-728f50533a24.jsonl`，对施工者列出的这三样的答复）。run 目录里上述四项之外保留：
 
 - `session/session.jsonl`（headless／ACP 腿包自己写的那份）：太史取帧起止与工具区间（`analyst-ledger`）、票轨迹（`ticket-trajectory`）、起居郎取原生会话区间（`ticket-provenance`）、settlement 取无卷生命周期事实与导航员到场都读它。
 - 各席受理时写入的输入，在 run 目录顶层：`merger-input.json`（校书郎 git 事实），席位运行时按路径读取。`--attach`、修内司 `--prerequisites` 与通进司 `--request-manifest` 只在受理记录里留下调用方原路径，不在腿目录落抄件；修内司／将作监派单文只作第一句话，不写 `fix-packet.md`／`task.md`（#1165、#1168）。
