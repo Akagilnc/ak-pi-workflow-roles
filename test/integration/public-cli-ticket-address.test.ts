@@ -181,6 +181,8 @@ test("#1201 default is the seat's most recently active leg under the ticket; <se
     const legB = turns.at(-1)!.leg;
     assert.notEqual(legB, legA);
     assert.deepEqual(seatRows(ticketDirectory, "judge").map((row) => row.round), ["1"]);
+    // A sibling leg whose directory exists but has written no row yet is not a candidate.
+    await mkdir(join(ticketDirectory, "runs", "01zz-not-started@judge"));
 
     // The later leg has no row yet and is still the default. The last turn was
     // already on that leg: the call has to start one more.

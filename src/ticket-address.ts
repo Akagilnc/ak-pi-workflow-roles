@@ -54,6 +54,7 @@ export function parseTicketLegLocator(token: string): Required<TicketLegAddress>
  * ticket, read off the leg directories themselves — rows exist only for accepted
  * receipts, so a leg that has not submitted yet is still found. Activity is the
  * mtime of the leg's state.jsonl: every turn appends its run-state rows there.
+ * A leg that has written no state.jsonl yet is not a candidate.
  * One `runs/` listing and one stat per leg of the seat.
  */
 export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress): string {
@@ -76,7 +77,8 @@ export function locateTicketLeg(bookDirectory: string, input: TicketLegAddress):
   let latest: { readonly leaf: string; readonly mtimeMs: number } | undefined;
   for (const entry of existsSync(runsDirectory) ? readdirSync(runsDirectory, { withFileTypes: true }) : []) {
     if (!entry.isDirectory() || parseRunLeaf(entry.name)?.role !== input.seat) continue;
-    const { mtimeMs } = statSync(join(runsDirectory, entry.name, RUN_STATE_FILE));
+    const mtimeMs = statSync(join(runsDirectory, entry.name, RUN_STATE_FILE), { throwIfNoEntry: false })?.mtimeMs;
+    if (mtimeMs === undefined) continue;
     if (
       latest === undefined
       || mtimeMs > latest.mtimeMs
