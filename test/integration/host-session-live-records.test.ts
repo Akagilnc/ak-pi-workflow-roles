@@ -133,7 +133,7 @@ process.stdout.write(JSON.stringify({
     assert.equal(content, JSON.stringify({ native: "claude-session-data" }) + "\n");
 
     // 2. A copied original leaves no pointer or landing row (#1299).
-    assert.deepEqual((await readSitianRecords(join(ledger.runDirectory, "log.jsonl"))).records
+    assert.deepEqual((await readSitianRecords(join(ledger.runDirectory, "state.jsonl"))).records
       .filter((record) => record.kind === "host-session"), []);
   } finally {
     ledger.dispose();
@@ -164,7 +164,7 @@ process.stdout.write(JSON.stringify({
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    const logPath = join(ledger.runDirectory, "log.jsonl");
+    const logPath = join(ledger.runDirectory, "state.jsonl");
 
     await mkdir(logPath);
     let declared = false;

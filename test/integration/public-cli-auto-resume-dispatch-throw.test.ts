@@ -22,7 +22,7 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempHome } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
-import { readRunLogRows } from "../helpers/run-dossier-fixture.ts";
+import { readStateRows } from "../helpers/run-dossier-fixture.ts";
 import { recordNonSealedSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/submission-errors.ts";
 
@@ -113,9 +113,9 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     assert.equal(terminal.roleOutcome.kind,"failure");
     assert.equal(terminal.autoResumeCount,2);
 
-    // (b) one retained error row per attempt in the run's log.jsonl, appended in order — no overwrite.
-    const logPath=join(runDir,"log.jsonl");
-    const retained=readRunLogRows(runDir,"dispatch-exception")
+    // (b) one retained error row per attempt in the run's state.jsonl, appended in order — no overwrite.
+    const logPath=join(runDir,"state.jsonl");
+    const retained=readStateRows(runDir).filter((row)=>row.kind==="dispatch-exception")
       .map((row)=>row.payload as {version?:number;attempt?:number;recordedAt?:string;error?:string});
     assert.deepEqual(retained.map((r)=>r.attempt),[0,1,2]);
     assert.ok(retained.every((r)=>r.version===1&&typeof r.recordedAt==="string"));
@@ -198,8 +198,8 @@ test("a leg filed under its ticket between throwing attempts hands back error fi
       ...facts.failedAttempts.map((attempt)=>attempt.errorFile!),
     ];
     assert.equal(handedBack.length,7);
-    for(const path of handedBack) assert.equal(path,join(ticketDir,"log.jsonl"));
-    await stat(join(ticketDir,"log.jsonl"));
+    for(const path of handedBack) assert.equal(path,join(ticketDir,"state.jsonl"));
+    await stat(join(ticketDir,"state.jsonl"));
   });
 });
 

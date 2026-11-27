@@ -20,7 +20,7 @@ import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { roleRuntimeDependenciesWithoutNavigator as createRoleRuntimeDependencies } from "../helpers/role-turn-host-fixture.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { readTicketProgressLines, type TicketProgressLine } from "../../src/ticket-progress.ts";
-import { runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
 import {
   argvFlagValue,
@@ -291,54 +291,41 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     // A caller's own --source-run pins through the same admission.
     assert.equal((await observed.summonNotary()).exitCode, 0);
     assert.deepEqual(observed.rounds("notary"), [["1", "judge#2"], ["2", "judge#2"]]);
-    // The audited leg cannot be read at admission: the officer still runs and
-    // seals, and each cause stays on the officer run. Unreadable ledger: the leg's
-    // files locate its latest arrival, whose round its name finds in the progress
-    // file; an unreadable progress file gives none. Unlisted receipts: the ledger
-    // may miss a later arrival, so none is pinned and no round is recorded, though
-    // the progress file is readable.
+    // #1300: the audited leg's one ledger holds its identity too. Unreadable or with a
+    // malformed line, the summons is refused at admission and no officer round is filed.
     const notaryRun = join(observed.ticketDirectory, observed.rows("notary")[0]!.receipt, "../..");
     const diagnostics = () => {
-      const notes = runLogPayloads<{ diagnostic?: unknown }>(notaryRun, "post-admission-diagnostic");
+      const notes = statePayloads<{ diagnostic?: unknown }>(notaryRun, "post-admission-diagnostic");
       assert.ok(notes.every((note) => typeof note.diagnostic === "string" && note.diagnostic !== ""));
       return notes.length;
     };
-    assert.equal(diagnostics(), 0);
-    const history = join(observed.parentRunDirectory, "history.jsonl");
-    await chmod(history, 0o000);
+    const ledger = join(observed.parentRunDirectory, "state.jsonl");
+    await chmod(ledger, 0o000);
     try {
-      assert.equal((await observed.summonNotary()).exitCode, 0);
-      assert.deepEqual(observed.rounds("notary").at(-1), ["3", "judge#2"]);
-      assert.equal(diagnostics(), 1);
-      const progress = join(observed.ticketDirectory, "current.jsonl");
-      await appendFile(progress, "{malformed\n", "utf8");
-      assert.equal((await observed.summonNotary()).exitCode, 0);
-      assert.deepEqual(observed.rounds("notary").at(-1), ["4", undefined]);
-      assert.equal(diagnostics(), 3);
-      await writeFile(progress, (await readFile(progress, "utf8")).replace("{malformed\n", ""), "utf8");
+      assert.equal((await observed.summonNotary()).exitCode, 1);
     } finally {
-      await chmod(history, 0o600);
+      await chmod(ledger, 0o600);
     }
-    // A malformed ledger line beside the draft it still locates: that draft and its
-    // round stand, and the bad line is reported.
-    await appendFile(history, "{malformed\n", "utf8");
-    assert.equal((await observed.summonNotary()).exitCode, 0);
-    assert.deepEqual(observed.rounds("notary").at(-1), ["5", "judge#2"]);
-    assert.equal(diagnostics(), 4);
-    await writeFile(history, (await readFile(history, "utf8")).replace("{malformed\n", ""), "utf8");
+    await appendFile(ledger, "{malformed\n", "utf8");
+    assert.equal((await observed.summonNotary()).exitCode, 1);
+    await writeFile(ledger, (await readFile(ledger, "utf8")).replace("{malformed\n", ""), "utf8");
+    assert.equal(observed.rounds("notary").length, 2);
+    // Unlisted receipts: the ledger may miss a later arrival, so none is pinned and no
+    // round is recorded; the officer still runs and seals, and the cause stays on its run.
+    assert.equal(diagnostics(), 0);
     const receipts = join(observed.parentRunDirectory, "receipts");
     await rename(receipts, `${receipts}.saved`);
     await writeFile(receipts, "not a folder", "utf8");
     assert.equal((await observed.summonNotary()).exitCode, 0);
-    assert.deepEqual(observed.rounds("notary").at(-1), ["6", undefined]);
+    assert.deepEqual(observed.rounds("notary").at(-1), ["3", undefined]);
     assert.equal(readPageSync(notaryRun, "admitted")?.auditedReceipt, undefined);
-    assert.equal(diagnostics(), 5);
+    assert.equal(diagnostics(), 1);
     // Nothing was named for review, so that officer's failed resume asks after no
     // audited original, even with the leg's drafts readable again.
     await rm(receipts);
     await rename(`${receipts}.saved`, receipts);
     // A fault about the audited leg is noted on that leg: its log, or its session first.
-    const notes = () => runLogPayloads(observed.parentRunDirectory, "post-admission-diagnostic").length
+    const notes = () => statePayloads(observed.parentRunDirectory, "post-admission-diagnostic").length
       + sessionFaultNotes(sessionFileOf(observed.parentRunDirectory)).length;
     const before = notes();
     notaryFails = true;
@@ -366,11 +353,9 @@ test.each(["readable", "unreportable"])("#1057 a notary escalation resumes into 
     assertEscalationPresented(observed, "notary", { status: "escalate", mark: 7 });
     assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
     if (original === "unreportable") {
-      // The Judge's original is gone, and neither its run log nor stderr can take a
-      // word: the failure already formed stays this call's result (ADR 0080).
+      // The Judge's original is gone and stderr cannot take a word: the failure
+      // already formed stays this call's result (ADR 0080).
       await rm(join(observed.parentRunDirectory, "receipts/1.json"));
-      await rm(join(observed.parentRunDirectory, "log.jsonl"), { force: true });
-      await mkdir(join(observed.parentRunDirectory, "log.jsonl"));
       const failed = await observed.resume(RULING, { stdout: () => undefined, stderr: () => { throw new Error("stderr closed"); } });
       assert.equal(failed.terminal?.roleOutcome.role, "judge");
       assert.equal(failed.terminal.roleOutcome.kind, "failure");
@@ -526,7 +511,7 @@ test.each(["undecidable", "host failure", "unreadable audited leg"])("#1214 R2b:
       assert.deepEqual(sessionFaultNotes(officerSession).map((note) => typeof note.diagnostic === "string" && note.diagnostic !== ""), [true]);
       return;
     }
-    assert.deepEqual(runLogPayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),
+    assert.deepEqual(statePayloads(observed.parentRunDirectory, "resume-diagnostic").map(e => [e.role, e.identity]),
       [["judge", { name: "Error", code: "ENOENT" }]]);
   }, [{ ...VERDICT, mark: 0 }, VERDICT]);
 });

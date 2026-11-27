@@ -1,4 +1,4 @@
-/** Sitian volume write failure remains durable under ADR 0086 (the submission rows themselves live in history.jsonl). */
+/** Sitian volume write failure remains durable under ADR 0086 (the submission rows themselves live in state.jsonl). */
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";

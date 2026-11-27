@@ -245,9 +245,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     );
 
     const topLevel = new Set(await readdir(ticketRunDirectory));
-    for (const required of ["history.jsonl", "state.jsonl"]) {
-      assert.equal(topLevel.has(required), true, `topology requires ${required}`);
-    }
+    assert.equal(topLevel.has("state.jsonl"), true, "topology requires state.jsonl");
     // #1199: session originals stay under the leg (`<run>/session`).
     const { sessionDirectoryOf } = await import("../../src/role-run-placement.ts");
     assert.equal(existsSync(sessionDirectoryOf(ticketRunDirectory)), true, "topology requires leg session/");

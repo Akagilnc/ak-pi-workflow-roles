@@ -28,8 +28,6 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { packageRoot, withHermeticHome } from "../helpers/environment-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import {
-  readHistoryRows,
-  readRunLogRows,
   readStateRows,
 } from "../helpers/run-dossier-fixture.ts";
 import { payloadFacts, payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
@@ -214,11 +212,7 @@ function kindSet(rows: readonly Record<string, unknown>[]): string[] {
 }
 
 function dossierKinds(runDirectory: string) {
-  return {
-    history: kindSet(readHistoryRows(runDirectory)),
-    state: kindSet(readStateRows(runDirectory)),
-    log: kindSet(readRunLogRows(runDirectory)),
-  };
+  return kindSet(readStateRows(runDirectory));
 }
 
 function admittedFacts(runDirectory: string) {

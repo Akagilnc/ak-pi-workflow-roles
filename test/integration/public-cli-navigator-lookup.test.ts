@@ -12,6 +12,7 @@ import { test } from "vitest";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
+import { stagedProgressLines } from "../helpers/run-dossier-fixture.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
@@ -55,10 +56,7 @@ async function callNavigator(
     const sessionFileExists = existsSync(coords.sessionFile);
     const receiptsDirectory = join(runDirectory, "receipts");
     const receipts = existsSync(receiptsDirectory) ? readdirSync(receiptsDirectory).sort() : [];
-    const progressPath = join(runDirectory, "progress.jsonl");
-    const progress = existsSync(progressPath)
-      ? readFileSync(progressPath, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { seat?: string; receipt?: string; session?: string })
-      : [];
+    const progress = stagedProgressLines(runDirectory);
     const receiptBodies = receipts.map((name) => JSON.parse(readFileSync(join(receiptsDirectory, name), "utf8")) as unknown);
     return { result, invocation, sessionFileExists, receipts, receiptBodies, progress };
   });

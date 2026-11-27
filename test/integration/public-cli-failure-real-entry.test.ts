@@ -1,10 +1,11 @@
-import { statePayloads, terminalBodyAt, lockStateRows, unlockStateRows, runLogPayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads, terminalBodyAt, lockStateRows, unlockStateRows, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { sessionFileOf } from "../../src/role-run-placement.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { chmodSync } from "node:fs";
+import { reportRunRecord } from "../../src/sitian-facade.ts";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
@@ -39,7 +40,7 @@ test.each([
   { step: "run-state persistence", seat: "judge", failing: "auditor" },
 ] as const)("public $step failure of $failing stays beside the accepted terminal and reaches the caller", async ({ step, seat, failing }) => {
   // After the seal, either the run-state write (state.jsonl locked) or the
-  // ticket placement (the leg's progress staging taken by a directory) fails —
+  // ticket placement (a staged progress row left to publish, ticket progress read-only) fails —
   // on the called seat, or on a gate officer it summoned in the same call.
   // The host already accepted; that terminal stays, and the caller is told the
   // cause the dossier keeps — from the first call's quiet attempt io and from a
@@ -52,6 +53,7 @@ test.each([
     await configurePassingReviewSeats(home);
     const { io, stderr } = captureIo();
     let lockedCurrent: string | undefined;
+    let lockedProgress: string | undefined;
     let failingRun: string | undefined;
     const runId = "run-audit-artifact-errno-001";
     const details = {
@@ -108,7 +110,12 @@ test.each([
               failingRun = request.runDirectory;
               // The seal is on the record; the leg's run-state write and placement are next.
               if (step === "afterDispatch") {
-                mkdirSync(join(request.runDirectory, "progress.jsonl"), { recursive: true });
+                reportRunRecord(request.runDirectory, "progress", {
+                  receipt: "runs/staged/receipts/9.json", round: "",
+                  line: { seat: failing, round: "", receipt: "runs/staged/receipts/9.json" },
+                }, "test-fixture");
+                lockedProgress = join(request.runDirectory, "../..", "current.jsonl");
+                chmodSync(lockedProgress, 0o444);
                 return out;
               }
               lockedCurrent = join(request.runDirectory, "state.jsonl");
@@ -131,6 +138,7 @@ test.each([
       // The injected failure really fired: the run-state never reached terminal.
       assert.notEqual(statePayloads<{ state?: string }>(runDirectory, "run-state").at(-1)?.state, "terminal");
     } finally {
+      if (lockedProgress !== undefined) chmodSync(lockedProgress, 0o644);
       if (lockedCurrent !== undefined) {
         try {
           unlockStateRows(dirname(lockedCurrent));

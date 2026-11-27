@@ -105,7 +105,7 @@ export async function retainPackageFault(input: {
     ...(Object.hasOwn(input, "error") ? { failure: projectThrownFailureLeaf(input.error) } : {}),
   };
   let retentionFailure: string | undefined;
-  // The run's log is the fallback after the session append throws, and the only
+  // The run's ledger is the fallback after the session append throws, and the only
   // channel when the caller has none.
   const writeLog = (appendFailure?: ControlledFailure): void => {
     reportRunRecord(input.runDirectory, "post-admission-diagnostic", {
@@ -162,7 +162,7 @@ const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
  * Single authoritative durable channel — a dossier custom entry via
  * sessionAppender — not a standing duplicate. Only when that one write
  * itself fails does this fall back to a `post-admission-diagnostic` row in the
- * run's log.jsonl, so an unhealthy session never leaves this diagnostic with
+ * run's state.jsonl, so an unhealthy session never leaves this diagnostic with
  * zero durable trace (#840 bounce class 2); a healthy session never gets a
  * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
  */

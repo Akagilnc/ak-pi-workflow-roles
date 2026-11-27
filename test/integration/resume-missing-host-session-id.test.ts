@@ -13,11 +13,11 @@ import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-ho
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads } from "../helpers/run-dossier-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 
 function packageNotes(runDirectory: string): Array<{ diagnostic?: unknown; failure?: { identity?: { code?: unknown } } }> {
-  return runLogPayloads(runDirectory, "post-admission-diagnostic");
+  return statePayloads(runDirectory, "post-admission-diagnostic");
 }
 
 function baseRequest(runDirectory: string): RoleTurnRequest {

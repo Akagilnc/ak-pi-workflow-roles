@@ -649,7 +649,7 @@ export async function relocateAdmittedRunToTicket(
 
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(admitted.runDirectory));
 
-  // Already under the ticket: publish leftover progress.jsonl (self + registered children).
+  // Already under the ticket: publish leftover staged progress rows (self + registered children).
   if (!isUnboundRunDirectory(admitted.runDirectory)) {
     relocateTicketProgressForLeg({ runDirectory: admitted.runDirectory }, publishedRounds);
     if (admitted.role !== "diarist") {

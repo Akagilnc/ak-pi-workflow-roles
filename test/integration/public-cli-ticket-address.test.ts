@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { test } from "vitest";
 
@@ -312,15 +312,10 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     assert.equal(inspected.exitCode, 0);
     assert.equal(forOf("inspector"), "judge#3");
 
-    // A path locator, unreadable ledger: the leg's files still locate its latest arrival,
+    // A path locator, an arrival the ledger never recorded: the leg's files still locate it,
     // an original never accepted, so it is the one under review and borrows no round.
     await writeFile(join(legA, "receipts", "3.json"), JSON.stringify(ruling({ arrivedOnly: true })));
-    await chmod(join(legA, "history.jsonl"), 0o000);
-    try {
-      await call(["new", "notary", "--model", SEAT_MODEL, "--source-run", legA], () => ({ status: "converged" }));
-    } finally {
-      await chmod(join(legA, "history.jsonl"), 0o644);
-    }
+    await call(["new", "notary", "--model", SEAT_MODEL, "--source-run", legA], () => ({ status: "converged" }));
     assert.equal(pinned(), "3.json");
     assert.equal(forOf("notary"), undefined);
 

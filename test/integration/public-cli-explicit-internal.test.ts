@@ -18,7 +18,7 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { createTempPackageHomeLedger, seedGitRepository, withTempRoot, isolatedTestProcessEnv } from "../helpers/environment-fixtures.ts";
-import { runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { statePayloads } from "../helpers/run-dossier-fixture.ts";
 import { writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
 
@@ -329,7 +329,7 @@ process.exit(0);
     });
     assert.equal(result.code, 0);
     assert.equal(result.knownFailure, undefined);
-    const notes = runLogPayloads<{ failure?: { identity?: { code?: unknown } } }>(ledger.runDirectory, "post-admission-diagnostic");
+    const notes = statePayloads<{ failure?: { identity?: { code?: unknown } } }>(ledger.runDirectory, "post-admission-diagnostic");
     assert.ok(notes.some((note) => note.failure?.identity?.code === "EPIPE"));
   } finally {
     ledger.dispose();

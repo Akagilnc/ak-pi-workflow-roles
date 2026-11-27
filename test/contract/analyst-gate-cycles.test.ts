@@ -9,7 +9,7 @@
  * length only) — never findings prose. No permanent internal-reader parallel.
  */
 import assert from "node:assert/strict";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "vitest";
 
@@ -191,7 +191,7 @@ type GateVolumeWriter = (name: string, content: string) => Promise<void>;
 
 /**
  * Write one gate session volume and book it as an officer-pointer record in the
- * judge run's history.jsonl through the real appender — the only way the analyst
+ * judge run's state.jsonl through the real appender — the only way the analyst
  * reaches officer sessions (the latest pointer per officer slot wins). Every
  * booked pointer is read as its own volume, so the historical dispatch/officer
  * pairs book one slot per file, named after the file.
@@ -215,7 +215,10 @@ function gateVolumeWriter(home: string): GateVolumeWriter {
 async function clearGateVolumes(home: string): Promise<void> {
   const runDirectory = judgeRunDirectory(home);
   await rm(join(runDirectory, "session", "gate-volumes"), { recursive: true, force: true });
-  await rm(join(runDirectory, "history.jsonl"), { force: true });
+  const ledger = join(runDirectory, "state.jsonl");
+  const kept = (await readFile(ledger, "utf8")).split("\n")
+    .filter((line) => line !== "" && JSON.parse(line).kind !== OFFICER_POINTER_RECORD_KIND);
+  await writeFile(ledger, kept.map((line) => `${line}\n`).join(""), "utf8");
 }
 
 test("analyst gate-cycles via runAnalyst: historical 7-round + zero-round siblings", async () => {

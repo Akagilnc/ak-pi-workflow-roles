@@ -1,4 +1,4 @@
-import { reportedReceipts, historyPayloads, sessionFaultNotes, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, statePayloads, sessionFaultNotes } from "../helpers/run-dossier-fixture.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
@@ -730,13 +730,14 @@ test("terminal persistence failure is noted and the auditor read of that run is 
       },
     );
 
-    // The run-state fact cannot be read from its damaged row file at persist (noted); the
-    // mandatory auditor then has to read that same run. That read is part of the audit,
-    // so the command must not deliver the parent as accepted.
+    // #1300: the leg's one ledger is unreadable, so neither its seal nor its run-state can
+    // be read. The command reports that cause and does not deliver the parent as accepted;
+    // the arriving original stays.
     assert.equal(result.exitCode, 1);
-    assert.equal(result.terminal, undefined);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(result.terminal?.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+    assert.deepEqual(result.terminal?.submissions, [recordedDetails]);
     const noteText = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
     assert.ok(typeof noteText === "string" && noteText !== "");
-    assert.ok((await readRecordedSubmissionRows(project, runId, home)).rows.some((row) => row.kind === "accepted"));
   });
 });

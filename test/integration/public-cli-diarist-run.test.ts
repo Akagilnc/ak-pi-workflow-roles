@@ -1697,7 +1697,7 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
     const bookKey = resolveBookKeyFromGit(project);
     const unboundRun = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@diarist`);
     assert.equal(existsSync(join(unboundRun, "records.jsonl")), false, "true-unbound must not mint run/records.jsonl");
-    const historyRows = (await readFile(join(unboundRun, "history.jsonl"), "utf8"))
+    const historyRows = (await readFile(join(unboundRun, "state.jsonl"), "utf8"))
       .trim()
       .split("\n")
       .map((row) => JSON.parse(row));
