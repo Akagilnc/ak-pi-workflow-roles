@@ -65,7 +65,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `log.jsonl`——司天台流水
 
-只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件复制两次都失败时的 warning，带宿主原件路径；Codex 找不到 rollout 时为 CLI 的 sessions 目录与会话 id）、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本。
+只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件复制两次都失败时的 warning，带宿主原件路径；Codex 找不到 rollout 时为 CLI 的 sessions 目录与会话 id）、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本。
 
 ### 宿主原件
 

@@ -183,33 +183,6 @@ test("#1091 auto-resume keeps retrying when the local session file is absent", a
   });
 });
 
-test("Pi custom-entry append surfaces Sitian persistence failure after the session write", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    const runDir = join(home, ".ak-roles", "books", "proj", "runs", "custom-entry-sitian-failure@judge");
-    const sessionDir = join(runDir, "session");
-    const sessionFile = join(sessionDir, "session.jsonl");
-    await mkdir(project, { recursive: true });
-    await mkdir(sessionDir, { recursive: true });
-    await writeFile(sessionFile, "{}\n", "utf8");
-    // Make the Sitian destination impossible while leaving the Pi session writable:
-    // a directory where the run's log.jsonl belongs.
-    await mkdir(join(runDir, "log.jsonl"));
-
-    await assert.rejects(
-      appendPiSessionCustomEntry(
-        piDurablePrincipalAuthority,
-        fixturePrincipal(dirname(sessionFile), sessionFile),
-        "custom-entry-probe",
-        { observed: true },
-      ),
-    );
-    const entries = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    assert.equal(entries.at(-1)?.type, "custom");
-    assert.equal(entries.at(-1)?.customType, "custom-entry-probe");
-  });
-});
-
 test("retention sink failure does not break the retry path (PR #418 isolation precedent)", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");

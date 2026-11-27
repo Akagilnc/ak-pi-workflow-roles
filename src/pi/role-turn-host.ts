@@ -37,7 +37,6 @@ import { projectThrownFailureLeaf, retainPackageFault } from "../public-cli/sett
 import { describeErrorIdentity } from "../public-cli/run-lifecycle.ts";
 import { RECEIPT_DELIVERY_LIMIT_ENV } from "../receipt-delivery-policy.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
-import { sitianReport } from "../sitian-facade.ts";
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
 const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = "extensions/role-runtime.ts";
@@ -590,11 +589,4 @@ export async function appendPiSessionCustomEntry(
     timestamp,
   });
   await appendFile(sessionFile, pointerLine, "utf8");
-  sitianReport({
-    level: "event",
-    kind: "dispatch-error",
-    sessionParent: sessionFile,
-    payload: { customType, data },
-    source: "pi-role-turn-host",
-  });
 }

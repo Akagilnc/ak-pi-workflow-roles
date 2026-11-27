@@ -162,9 +162,8 @@ export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
  * even though the attempt's own io may be dummyIo (#840 r9 判词 class 1).
  * Single authoritative durable channel — a dossier custom entry via
  * sessionAppender — not a standing duplicate. Only when that one write
- * itself fails does this fall back to a plain run-artifacts file (reusing
- * auto-resume.ts's existing dispatch-error retention helper — no new
- * mechanism), so an unhealthy session never leaves this diagnostic with
+ * itself fails does this fall back to a `post-admission-diagnostic` row in the
+ * run's log.jsonl, so an unhealthy session never leaves this diagnostic with
  * zero durable trace (#840 bounce class 2); a healthy session never gets a
  * redundant second copy (#840 bounce class 1: 同一业务规则只保留一个权威实现).
  */

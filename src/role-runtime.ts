@@ -14,7 +14,6 @@ import {
 
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
-import { sitianReportSafe } from "./host-session-record.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 import { registerFiledSubmissionTool, type FiledSubmissionBeforeAccept } from "./filed-submission.ts";
 import {
@@ -1252,14 +1251,6 @@ export function createRoleRuntimeExtension(
             attemptPointer: receiptAttemptPointer(runPointer, ctx.invocationScopeId),
           });
           envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-          sitianReportSafe({
-            level: "event",
-            kind: "no-receipt-lifecycle",
-            cwd: ctx.cwd,
-            sessionParent: ctx.sessionManager.getSessionFile(),
-            payload: facts,
-            source: "role-runtime",
-          });
         }
       }
     });

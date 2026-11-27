@@ -92,7 +92,7 @@ export function statePayloads<T = Record<string, unknown>>(runDirectory: string,
 
 /**
  * Every line of `<run>/log.jsonl`, parsed raw (`[]` when absent), optionally
- * only rows of one `kind` (host stderr, dispatch-error, post-admission-diagnostic,
+ * only rows of one `kind` (dispatch-exception, post-admission-diagnostic,
  * resume-diagnostic, host-session, ...). Each row's content is its `payload`.
  */
 export function readRunLogRows(runDirectory: string, kind?: string): Record<string, unknown>[] {
