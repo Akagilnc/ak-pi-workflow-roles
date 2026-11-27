@@ -16,6 +16,7 @@
 import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
+  readStateRows,
   statePayloads,
   lockStateRows,
   unlockStateRows,
@@ -1140,8 +1141,11 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     (await readdir(coderRunDirectory)).sort(),
     [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES].sort(),
   );
-  // #1299: an accepted court writes no terminal row.
-  assert.deepEqual(statePayloads(coderRunDirectory, "terminal"), []);
+  // #1299: a clean accepted court leaves its pages, its submission rows with their progress
+  // rows and the worker gate baseline in the ledger — no terminal row, no diagnostic row.
+  assert.deepEqual(readStateRows(coderRunDirectory).map((row) => row.kind).filter((kind) => ![
+    "invocation", "admitted-request", "run-state", "commit-baseline", "candidate", "outcome", "sealed", "progress",
+  ].includes(String(kind))), []);
   // #1199: session originals stay under the leg (`<run>/session`).
   assert.deepEqual(
     (await readdir(sessionDirectoryOf(coderRunDirectory))).sort(),

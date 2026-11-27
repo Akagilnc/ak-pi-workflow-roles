@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { test } from "vitest";
 
@@ -324,10 +324,9 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     const noted = () => statePayloads(join(ticketDirectory, "runs", turns.at(-1)!.leg), "post-admission-diagnostic").length;
     assert.equal(noted(), 0);
     const progress = join(ticketDirectory, "current.jsonl");
-    const intact = await readFile(progress, "utf8");
-    await writeFile(progress, `${intact}{malformed\n`);
+    await appendFile(progress, "{malformed\n");
     await boundTo(legA);
-    await writeFile(progress, intact);
+    await writeFile(progress, (await readFile(progress, "utf8")).replace("{malformed\n", ""));
     assert.equal(pinned(), "3.json");
     assert.equal((readPageSync(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted") ?? {}).for, undefined);
     assert.equal(noted(), 1);
