@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { test } from "vitest";
 
@@ -22,6 +22,7 @@ import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 import { withHermeticHome, withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { readPageSync } from "../../src/run-dossier.ts";
+import { statePayloads } from "../helpers/run-dossier-fixture.ts";
 import { seedPublicSeat } from "../helpers/passing-review-host.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -318,6 +319,18 @@ test("#1201 --source-run <ticket>:<seat>#<round> binds the officer to the leg th
     await call(["new", "notary", "--model", SEAT_MODEL, "--source-run", legA], () => ({ status: "converged" }));
     assert.equal(pinned(), "3.json");
     assert.equal(forOf("notary"), undefined);
+    // The ticket's progress file has a malformed row: the round of that arrival cannot be
+    // read, so the officer still runs with none pinned and the cause stays on its own leg.
+    const noted = () => statePayloads(join(ticketDirectory, "runs", turns.at(-1)!.leg), "post-admission-diagnostic").length;
+    assert.equal(noted(), 0);
+    const progress = join(ticketDirectory, "current.jsonl");
+    const intact = await readFile(progress, "utf8");
+    await writeFile(progress, `${intact}{malformed\n`);
+    await boundTo(legA);
+    await writeFile(progress, intact);
+    assert.equal(pinned(), "3.json");
+    assert.equal((readPageSync(join(ticketDirectory, "runs", turns.at(-1)!.leg), "admitted") ?? {}).for, undefined);
+    assert.equal(noted(), 1);
 
     const turnsBefore = turns.length;
     const legsBefore = await legCount(home);

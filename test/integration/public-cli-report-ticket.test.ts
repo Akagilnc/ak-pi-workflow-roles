@@ -852,6 +852,13 @@ test("#1199 public resume relocate: ticket current write fail keeps leg staging 
     // Round filled at bind, and no receipt published twice across the failed bind and its retry.
     assert.deepEqual(relocated.map((row) => row.round), relocated.map((_, index) => String(index + 2)));
     assert.equal(new Set(relocated.map((row) => row.receipt)).size, relocated.length);
+    // A published row is staged no longer: the retry's own seal and filing after it
+    // carry each receipt's round into the leg's ledger once.
+    assert.deepEqual(
+      statePayloads<{ receipt: string; round: string }>(movedLeaf, "progress")
+        .filter((row) => row.round !== "").map(({ receipt, round }) => [receipt, round]),
+      relocated.map(({ receipt, round }) => [receipt, round]),
+    );
     for (const row of relocated) {
       assert.equal(existsSync(join(ticketSubject, row.receipt)), true, row.receipt);
       assert.equal(existsSync(join(ticketSubject, row.session)), true, row.session);

@@ -39,7 +39,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `state.jsonl`——包自己的账
 
-只追加，经司天台 appender 唯一入口；本腿 session 名下的每一种记录都落这一份，每行带自己的 `kind`，读者整份读进来按 `kind` 取。没报票号的腿同此。
+只追加，经司天台 appender 唯一入口；本腿 session 名下的记录，除已报票号的起居录行进票目录 `records.jsonl` 外，都落这一份，每行带自己的 `kind`，读者整份读进来按 `kind` 取。没报票号的腿同此。
 
 原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份，最后一条是当前的：
 
@@ -60,7 +60,9 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 - `officer-pointer`：历史闸传召指针行（只读档案）。生产不再新写（#1195）。
 - 诊断：`host-session`（宿主原件复制两次都失败时的 warning，带宿主原件路径；Codex 找不到 rollout 时为 CLI 的 sessions 目录与会话 id）、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`post-admission-diagnostic`、`resume-diagnostic` 等。
 
-写失败的处置按记录种类定，在各调用者里：受理、状态、交卷这几类写不进，如实失败并报真因；诊断行与复制 warning 行写不进，不改终局、申报一次。一行坏记录或整份读不了，影响这条腿全部读者：受理、续跑与传召本腿的审官都如实失败。
+写失败的处置按记录种类定，在各调用者里：受理、状态、交卷这几类写不进，如实失败并报真因；交卷已收下之后的运行状态写不进，收下的终局不变，真因记在本腿会话并报给调用者；诊断行与复制 warning 行写不进，不改终局、申报一次。
+
+一行坏记录或整份读不了时，续跑这条腿、调用者以 `--source-run` 传召审官审这条腿，都在受理时如实失败。本腿当次调用交卷后整份读不了，以失败终局报出真因，到达的原件留着。已受理的审官续跑时被审腿的账读不了，审官照常运行，真因记在审官自己的会话。
 
 默认续跑挑同票同席最近活动的那条腿，看的是这份账的修改时间：任何一种记录写入都算活动。
 
