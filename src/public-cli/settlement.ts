@@ -153,7 +153,7 @@ export async function retainPackageFault(input: {
  * diagnostic never reaches a real caller — the dossier is the durable
  * channel that does (失败诚实宪法 真因必须落痕).
  */
-export const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
+const POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE =
   "ak_post_admission_cleanup_diagnostic" as const;
 
 /**

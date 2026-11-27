@@ -226,8 +226,8 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     await mkdir(sessionDirectory, { recursive: true });
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await writeFile(sessionFile, "\n", "utf8");
-    seedStatePage(runDirectory, "admitted", { role: inventedRole, runId });
-    seedStatePage(runDirectory, "runState", {
+    seedStatePage(runDirectory, "admitted-request", { role: inventedRole, runId });
+    seedStatePage(runDirectory, "run-state", {
       runId,
       role: inventedRole,
       state: "terminal",
@@ -309,7 +309,7 @@ test("notary admits canonical ledger source-run by path; rejects project project
     // Locator consumes retained identity, not the full resumable run record.
     const state = (readPageSync(sourceRunPath, "runState") ?? {});
     delete state.projectRoot;
-    seedStatePage(sourceRunPath, "runState", state);
+    seedStatePage(sourceRunPath, "run-state", state);
     const identityOnly = await resolveNotarySourceRunLocator({
       projectRoot: project,
       sourceRun: sourceRunPath,

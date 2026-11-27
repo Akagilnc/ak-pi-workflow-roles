@@ -26,7 +26,7 @@ import type { SitianRecordInput } from "./sitian-contracts.ts";
 import { errorText, isEnoent } from "./unknown-value.ts";
 
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
-export const HOST_SESSION_RECORD_KIND = "host-session" as const;
+const HOST_SESSION_RECORD_KIND = "host-session" as const;
 
 function declareHostSessionFailure(error: unknown): void {
   const message = error instanceof Error ? (error.stack || error.message) : String(error);

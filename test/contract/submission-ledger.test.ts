@@ -148,8 +148,8 @@ test.each(["unbound", "bound", "inline"] as const)("ledger records raw params an
       f.root,
       async () => ({ content: [], details, terminate: true }),
     );
-    for (const section of ["invocation", "admitted"] as const) {
-      seedStatePage(host.context.runDirectory!, section, {
+    for (const kind of ["invocation", "admitted-request"] as const) {
+      seedStatePage(host.context.runDirectory!, kind, {
         role: "judge", runId: "run-ledger", bookKey: "fixture", projectRoot: f.root,
         instruction: "Review the submission.",
       });

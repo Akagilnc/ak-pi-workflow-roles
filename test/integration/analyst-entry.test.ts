@@ -956,7 +956,7 @@ test("analyst entry does not turn an incomplete live run state into no-receipt",
   await withTempHome(async (home) => {
     const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
     clearStateRows(runDirectory, "terminal");
-    seedStatePage(runDirectory, "runState", { state: "running" });
+    seedStatePage(runDirectory, "run-state", { state: "running" });
 
     const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
     const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);

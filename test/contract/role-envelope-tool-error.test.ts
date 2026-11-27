@@ -42,7 +42,7 @@ async function prepareUnboundEnvelope(
     projectRoot: packageRoot,
   };
   seedStatePage(runDirectory, "invocation", identity);
-  seedStatePage(runDirectory, "admitted", identity);
+  seedStatePage(runDirectory, "admitted-request", identity);
   const socketPath = join(home, `mcp-${role}.sock`);
   const prepared = await prepareRoleEnvelope({
     request: {
@@ -282,7 +282,7 @@ test("#1214 R1b: diarist commitDiaristProjection I/O failure is round infrastruc
       ticketNumber: R1B_TICKET,
     };
     seedStatePage(runDirectory, "invocation", identity);
-    seedStatePage(runDirectory, "admitted", identity);
+    seedStatePage(runDirectory, "admitted-request", identity);
     // Block the ticket records file so commit append cannot open it.
     await mkdir(join(bookRoot, String(R1B_TICKET), "records.jsonl"));
     const socketPath = join(home, "mcp-diarist-commit.sock");

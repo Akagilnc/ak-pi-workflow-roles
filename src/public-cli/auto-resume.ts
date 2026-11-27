@@ -127,7 +127,7 @@ export class TurnDispatchedFailure extends Error {
 }
 
 /** Session custom-entry type carrying the pointer to one dispatch error file. */
-export const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
+const DISPATCH_ERROR_RETENTION_ENTRY_TYPE = "ak_run_dispatch_error_retention" as const;
 
 /** Cycle- and bigint-safe JSON replacer so serialization itself cannot drop data. */
 function jsonSafeReplacer(): (key: string, value: unknown) => unknown {

@@ -17,7 +17,7 @@ import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { test } from "vitest";
 
-import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
+import { runWithAutoResumeLoop } from "../../src/public-cli/auto-resume.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempHome } from "../helpers/environment-fixtures.ts";
@@ -124,7 +124,7 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     // (c) dossier pointers (one per attempt) address the log that holds those rows.
     const lines=(await readFile(sessionFile,"utf8")).trim().split("\n").filter(Boolean);
     const pointers=lines.map((l)=>JSON.parse(l) as PointerEntry)
-      .filter((e)=>typeof e==="object"&&e!==null&&(e as {customType?:unknown}).customType===DISPATCH_ERROR_RETENTION_ENTRY_TYPE);
+      .filter((e)=>typeof e==="object"&&e!==null&&(e as {customType?:unknown}).customType==="ak_run_dispatch_error_retention");
     assert.deepEqual(pointers.map((p)=>p.data?.attempt),[0,1,2]);
     for(const p of pointers){
       assert.equal(p.data?.file,logPath);

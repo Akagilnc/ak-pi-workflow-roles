@@ -395,7 +395,7 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
-    seedStatePage(sourceRunPath, "admitted", {
+    seedStatePage(sourceRunPath, "admitted-request", {
       role: CANONICAL_SOURCE_ROLE,
       runId: CANONICAL_SOURCE_RUN_ID,
       ticketNumber: 582,

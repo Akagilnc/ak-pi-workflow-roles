@@ -8,23 +8,21 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { PAGE_ROW_KIND, type CurrentSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
-import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 
 /**
- * Seed (replace) one whole-page section: one state.jsonl row, appended raw as the
+ * Seed (replace) one whole page: one state.jsonl row of that kind, appended raw as the
  * appender writes it, so a leg outside a ledger home can be seeded too. Creates the run directory.
  */
 export function seedStatePage(
   runDirectory: string,
-  section: CurrentSection,
+  kind: "invocation" | "admitted-request" | "run-state" | "terminal",
   value: Record<string, unknown>,
 ): void {
   mkdirSync(runDirectory, { recursive: true });
   appendFileSync(
     join(runDirectory, "state.jsonl"),
-    `${JSON.stringify({ level: "event", kind: PAGE_ROW_KIND[section], identity: randomUUID(), timestamp: new Date().toISOString(), host: "pi", source: "test-seed", payload: value })}\n`,
+    `${JSON.stringify({ level: "event", kind, identity: randomUUID(), timestamp: new Date().toISOString(), host: "pi", source: "test-seed", payload: value })}\n`,
     "utf8",
   );
 }
@@ -119,9 +117,10 @@ export function runLogPayloads<T = Record<string, unknown>>(runDirectory: string
  * Only those lines are parsed: a session may hold malformed lines of its own.
  */
 export function sessionFaultNotes(sessionFile: string): { diagnostic?: unknown }[] {
-  return readFileSync(sessionFile, "utf8").split("\n").filter((line) => line.includes(POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE))
+  const type = "ak_post_admission_cleanup_diagnostic";
+  return readFileSync(sessionFile, "utf8").split("\n").filter((line) => line.includes(type))
     .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-    .flatMap((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE ? [entry.data ?? {}] : []);
+    .flatMap((entry) => entry.customType === type ? [entry.data ?? {}] : []);
 }
 
 /** The originals named by this leg's seals, in order. */

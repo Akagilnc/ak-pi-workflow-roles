@@ -267,10 +267,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.ok(typeof note === "string" && note !== "");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
       const terminalFaces = () => statePayloads<{ face?: string }>(runDirectory, "terminal").map((row) => row.face);
-      assert.deepEqual(terminalFaces(), [], "an accepted seal writes no terminal row");
-
-      // An accepted terminal appends no terminal row; the refused write was the run-state.
-      assert.deepEqual(statePayloads(runDirectory, "terminal"), []);
+      // An accepted seal writes no terminal row; the refused write was the run-state.
+      assert.deepEqual(terminalFaces(), []);
 
       await restoreWritable();
 
@@ -539,7 +537,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     // Simulate a resumable run-state written before sessionFile was persisted.
     const legacyState = (readPageSync(runDirectory, "runState") ?? {});
     delete legacyState.sessionFile;
-    seedStatePage(runDirectory, "runState", legacyState);
+    seedStatePage(runDirectory, "run-state", legacyState);
     const admittedBefore = (readPageSync(runDirectory, "admitted") ?? {}) as {
       instruction: string;
       attachments: Array<{ path: string }>;
@@ -1409,7 +1407,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
     const sessionDirectory = sessionDirectoryOf(runDirectory);
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await mkdir(sessionDirectory, { recursive: true });
-    seedStatePage(runDirectory, "admitted", {
+    seedStatePage(runDirectory, "admitted-request", {
       role: "judge",
       instruction: "x",
       instructionEmpty: false,
@@ -1670,7 +1668,7 @@ test("public resume failures persist structured diagnostics", async () => {
           ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
         };
         seedStatePage(runDirectory, "invocation", durable);
-        seedStatePage(runDirectory, "admitted", durable);
+        seedStatePage(runDirectory, "admitted-request", durable);
         await markRunAdmitted({
           role: input.role,
           runId: input.runId,
@@ -1792,7 +1790,7 @@ test("public resume failures persist structured diagnostics", async () => {
         projectRoot: project,
         ticketNumber: 2003,
       });
-      seedStatePage(corruptRunState.runDirectory, "runState", {});
+      seedStatePage(corruptRunState.runDirectory, "run-state", {});
       await assertPreHostResumeDiagnostic(
         corruptRunState.runDirectory,
         "1058-corrupt-run-state",

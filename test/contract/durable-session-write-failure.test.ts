@@ -160,7 +160,7 @@ test("#959 durable flush failure outranks completed Doctor submission", async ()
       projectRoot: packageRoot,
       runDirectory,
     } as const;
-    seedStatePage(runDirectory, "admitted", durable);
+    seedStatePage(runDirectory, "admitted-request", durable);
     seedStatePage(runDirectory, "invocation", durable);
     const base = createRoleRuntimeDependencies(packageRoot);
     const prepared = await prepareRoleEnvelope({

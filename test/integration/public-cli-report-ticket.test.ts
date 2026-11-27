@@ -261,12 +261,12 @@ async function seedUnboundChildWithStaging(input: {
   await mkdir(sessionDirectoryOf(childDir), { recursive: true });
   const identity = { bookKey: input.bookKey, projectRoot: input.project };
   const parentAdmitted = (readPageSync(input.parentDir, "admitted") ?? {});
-  seedStatePage(input.parentDir, "admitted", {
+  seedStatePage(input.parentDir, "admitted-request", {
     ...parentAdmitted,
     childDiaristRunIds: [input.childRunId],
   });
   seedStatePage(childDir, "invocation", { role: "diarist", runId: input.childRunId, ...identity });
-  seedStatePage(childDir, "admitted", { role: "diarist", runId: input.childRunId, ...identity });
+  seedStatePage(childDir, "admitted-request", { role: "diarist", runId: input.childRunId, ...identity });
   await writeFile(
     join(childDir, RUN_HISTORY_FILE),
     `${JSON.stringify({

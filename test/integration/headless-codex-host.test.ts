@@ -6,7 +6,6 @@ import { test } from "vitest";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
-import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
@@ -222,7 +221,7 @@ process.stdout.write(body, () => {
     assert.equal(await readFile(join(root, "session", "codex.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     // A copied original leaves no pointer or landing row; the start leaves no delivery row (#1299).
     assert.deepEqual((await readSitianRecords(join(root, "log.jsonl"))).records
-      .filter((record) => record.kind === HOST_SESSION_RECORD_KIND), []);
+      .filter((record) => record.kind === "host-session"), []);
     assert.deepEqual(readHistoryRows(root), []);
     const delivered = (await readFile(deliveredLog, "utf8")).trim().split("\n")
       .map((line) => JSON.parse(line) as { systemPrompt: string; outputSchema: unknown });
@@ -376,7 +375,7 @@ process.stdout.write(body, () => {
     assert.equal(cleared.code, 0);
     assert.equal(cleared.knownFailure, undefined);
     const warnings = (await readSitianRecords(join(root, "log.jsonl"))).records
-      .filter((record) => record.kind === HOST_SESSION_RECORD_KIND)
+      .filter((record) => record.kind === "host-session")
       .map((record) => record.payload as { type?: string; nativePath?: string; sessionId?: string });
     const last = warnings.at(-1);
     assert.deepEqual({ type: last?.type, nativePath: last?.nativePath, sessionId: last?.sessionId },

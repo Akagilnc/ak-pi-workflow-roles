@@ -359,7 +359,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
           `${input.runId}@${input.role}`,
         );
         await mkdir(join(runDir, "session"), { recursive: true });
-        seedStatePage(runDir, "runState", {
+        seedStatePage(runDir, "run-state", {
           runId: input.runId,
           role: input.role,
           state: input.state,

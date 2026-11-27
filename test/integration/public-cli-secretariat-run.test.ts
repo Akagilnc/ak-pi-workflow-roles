@@ -942,7 +942,7 @@ async function adapterBoundaryCase(input: {
       "01a0adp969-0000-7000-8000-000000000001@secretariat",
     );
     await mkdir(join(runDirectory, "session"), { recursive: true });
-    seedStatePage(runDirectory, "admitted", {
+    seedStatePage(runDirectory, "admitted-request", {
       ticketNumber: 924,
       projectRoot: project,
       runId: "01a0adp969-0000-7000-8000-000000000001",

@@ -13,7 +13,6 @@ import { test } from "vitest";
 
 import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
@@ -46,7 +45,7 @@ function request(runDirectory: string, home: string, model?: { provider?: string
 /** The host-session rows the run's single log.jsonl carries. */
 async function hostSessionRecords(runDirectory: string) {
   const { records } = await readSitianRecords(join(runDirectory, "log.jsonl"));
-  return { records: records.filter((record) => record.kind === HOST_SESSION_RECORD_KIND) };
+  return { records: records.filter((record) => record.kind === "host-session") };
 }
 
 function createHost(input: {

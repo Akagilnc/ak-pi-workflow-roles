@@ -13,7 +13,6 @@ import { test } from "vitest";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { HeadlessHostDescription } from "../../src/headless-host/description.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/environment-fixtures.ts";
@@ -135,7 +134,7 @@ process.stdout.write(JSON.stringify({
 
     // 2. A copied original leaves no pointer or landing row (#1299).
     assert.deepEqual((await readSitianRecords(join(ledger.runDirectory, "log.jsonl"))).records
-      .filter((record) => record.kind === HOST_SESSION_RECORD_KIND), []);
+      .filter((record) => record.kind === "host-session"), []);
   } finally {
     ledger.dispose();
   }

@@ -897,7 +897,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
 
     const persisted = (readPageSync(admitted.runDirectory, "admitted") ?? {});
     persisted.authorityRefs = ["", "The system SHALL launch two workers"];
-    seedStatePage(admitted.runDirectory, "admitted", persisted);
+    seedStatePage(admitted.runDirectory, "admitted-request", persisted);
 
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
@@ -907,7 +907,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
 
     persisted.authorityRefs = ["https://example.com/durable-ref"];
     persisted.lens = "all";
-    seedStatePage(admitted.runDirectory, "admitted", persisted);
+    seedStatePage(admitted.runDirectory, "admitted-request", persisted);
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
@@ -916,7 +916,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
 
     persisted.lens = "correctness";
     persisted.baseRevision = "";
-    seedStatePage(admitted.runDirectory, "admitted", persisted);
+    seedStatePage(admitted.runDirectory, "admitted-request", persisted);
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
@@ -924,7 +924,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     );
 
     persisted.baseRevision = "--lens";
-    seedStatePage(admitted.runDirectory, "admitted", persisted);
+    seedStatePage(admitted.runDirectory, "admitted-request", persisted);
     await assert.rejects(
       () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>

@@ -40,7 +40,7 @@ export async function seedCanonicalSourceRun(
     })}\n`,
     "utf8",
   );
-  seedStatePage(coords.runDirectory, "admitted", {
+  seedStatePage(coords.runDirectory, "admitted-request", {
     role: CANONICAL_SOURCE_ROLE,
     runId,
     ...(options.ticketNumber === undefined ? {} : { ticketNumber: options.ticketNumber }),

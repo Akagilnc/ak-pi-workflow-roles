@@ -115,7 +115,7 @@ test("analyst live run-state is not classified as terminal no-receipt", async ()
     );
     // Drop the prior terminal so live run-state is not classified via a leftover receipt.
     clearStateRows(runDir, "terminal");
-    seedStatePage(runDir, "runState", {
+    seedStatePage(runDir, "run-state", {
       runId: C1_ALPHA_RUN,
       role: "coder",
       state: "running",
