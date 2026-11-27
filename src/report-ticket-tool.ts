@@ -22,7 +22,7 @@ import {
 } from "./public-cli/invocation.ts";
 import { isUnboundRunDirectory, sessionDirectoryOf, sessionFileOf } from "./role-run-placement.ts";
 import { rewriteRunDirectoryPathValue } from "./role-run-path-rewrite.ts";
-import { readPageSync } from "./run-dossier.ts";
+import { pageFromRows, readStateControlRowsSync } from "./run-dossier.ts";
 import { readDeclaredTicketNumber } from "./run-ticket-number.ts";
 import { isRecord } from "./unknown-value.ts";
 
@@ -55,8 +55,10 @@ export function admittedForLiveTicketReport(
   runDirectory: string,
   authority: DurablePrincipalAuthority,
 ): AdmittedRoleInvocation {
-  const admittedPage = readPageSync(runDirectory, "admitted") ?? {};
-  const invocationPage = readPageSync(runDirectory, "invocation") ?? {};
+  // One read of the leg's state rows serves both pages.
+  const rows = readStateControlRowsSync(runDirectory);
+  const admittedPage = pageFromRows(rows, "admitted", runDirectory) ?? {};
+  const invocationPage = pageFromRows(rows, "invocation", runDirectory) ?? {};
   const role = pageString(admittedPage, "role") ?? pageString(invocationPage, "role");
   const runId = pageString(admittedPage, "runId") ?? pageString(invocationPage, "runId");
   const bookKey = pageString(admittedPage, "bookKey") ?? pageString(invocationPage, "bookKey");
