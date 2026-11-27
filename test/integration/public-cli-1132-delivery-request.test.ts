@@ -12,7 +12,7 @@
  */
 import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
 import { seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
-import { readStateRowsSync, readPageSync } from "../../src/run-dossier.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { runDirectoryFromSessionDirectory } from "../../src/role-run-placement.ts";
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
@@ -911,7 +911,11 @@ test("#1132: a delivery assembly failure after the turn started resumes the sess
     // Syntax damage fails closed for every control-plane page read, so
     // markRunTerminal cannot flip runState (best-effort note beside the failure
     // terminal — same persistence disposition as main). Do not pretend terminal.
-    const runState = readStateRowsSync(runDirectory!).filter((row) => row.kind === "run-state").at(-1)?.payload as { state?: string };
+    // The file as it sits on disk: every line but the planted one is a row.
+    const runState = (await readFile(join(runDirectory!, "state.jsonl"), "utf8")).split("\n")
+      .filter((line) => line !== "" && line !== "not JSON")
+      .map((line) => JSON.parse(line) as { kind?: string; payload?: { state?: string } })
+      .filter((row) => row.kind === "run-state").at(-1)!.payload!;
     assert.equal(runState.state, "running");
   });
 });

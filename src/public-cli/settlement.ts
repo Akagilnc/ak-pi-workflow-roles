@@ -495,7 +495,7 @@ export type ControlledFailure = RoleTurnKnownFailure & {
  * Facts the package itself established, each kept whole. None of them is ever
  * promoted into the host's cause, diagnostic or details.
  */
-export type PackageSideFact = {
+type PackageSideFact = {
   /**
    * This package's own view of the host's exit for this call. Kept beside the
    * host's `details`, never inside it.

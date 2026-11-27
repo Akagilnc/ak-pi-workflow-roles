@@ -131,8 +131,7 @@ function appendPageRow(runDirectory: string, section: CurrentSection, page: Reco
 /**
  * Control-plane rows of `state.jsonl` (#1161 / #1178).
  * IO fault and decoder diagnostics refuse — reachable older facts must not
- * silently drive lifecycle. Missing file is empty. Observation that keeps
- * reachable rows after damage still uses `readStateRowsSync`.
+ * silently drive lifecycle. Missing file is empty.
  * Sole owner of this fail-closed policy; page readers and worker gate share it.
  */
 export function readStateControlRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
@@ -153,17 +152,6 @@ export function readStateControlRowsSync(runDirectory: string): readonly Record<
  */
 export function readPageSync(runDirectory: string, section: CurrentSection): Record<string, unknown> | undefined {
   return pageFromRows(readStateControlRowsSync(runDirectory), section, runDirectory);
-}
-
-/**
- * Every row of state.jsonl, in order; a file that cannot be read throws.
- * Wide observation path: decoder diagnostics are not a hard refuse.
- * Control consumers must use `readStateControlRowsSync`.
- */
-export function readStateRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
-  const state = readRowFile(join(runDirectory, RUN_STATE_FILE));
-  if (state.fault !== undefined) throw new Error(`${RUN_STATE_FILE} is unreadable (${state.fault}): ${runDirectory}`);
-  return state.rows;
 }
 
 /** Rewrite one section whole by appending its row; returns the row's file. */

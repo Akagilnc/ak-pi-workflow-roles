@@ -294,7 +294,6 @@ type ToolCallEvent = { toolName: string; toolCallId: string; input: Record<strin
 type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean; content: HostToolResult["content"]; details: unknown };
 type SessionStartEvent = { reason: string };
 type AgentEndEvent = { messages: readonly HostEventMessage[] };
-/** Typed closure of exactly one assistant turn; calls come from the host event, not transcript inspection. */
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };

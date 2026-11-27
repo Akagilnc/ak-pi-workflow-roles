@@ -34,7 +34,7 @@ function declareHostSessionFailure(error: unknown): void {
 }
 
 /** Declare sitian record failure once to stderr without aborting the leg (ADR 0086). */
-export function sitianReportSafe(input: SitianRecordInput): void {
+function sitianReportSafe(input: SitianRecordInput): void {
   try {
     sitianReport(input);
   } catch (error) {
