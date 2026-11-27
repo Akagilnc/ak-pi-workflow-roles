@@ -3,7 +3,6 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
-import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { historyPayloads, submittedParams, statePayloads, readStatePage, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -1851,20 +1850,14 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
       "unbound must not keep the durable runState section after relocate",
     );
 
-    // Relocation keeps both attempts in the package ledger, not the host original.
-    const relocatedSessionFile = sessionFileOf(ticketPlacement.runDirectory);
-    const hostRows = (await readFile(relocatedSessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { customType?: string });
-    assert.equal(hostRows.some((row) => row.customType === ATTEMPT_HISTORY_ENTRY_TYPE), false);
-    const attemptHistory = historyPayloads<{
-      type?: string; role?: string; runId?: string; outcome?: { kind?: string; diagnostic?: string };
-    }>(ticketPlacement.runDirectory, "attempt-history");
-    assert.equal(attemptHistory.length, 1);
-    assert.equal(attemptHistory[0]?.type, ATTEMPT_HISTORY_ENTRY_TYPE);
-    assert.equal(attemptHistory[0]?.outcome?.kind, "failure");
-    assert.equal(typeof attemptHistory[0]?.outcome?.diagnostic, "string");
-    assert.ok((attemptHistory[0]?.outcome?.diagnostic as string).length > 0);
-    assert.equal(attemptHistory[0]?.role, "diarist");
-    assert.equal(attemptHistory[0]?.runId, runId);
+    // The retried host failure keeps its error terminal row on the relocated leg (#1299).
+    const terminals = statePayloads<{
+      face?: string; body?: { role?: string; runId?: string; diagnostic?: string };
+    }>(ticketPlacement.runDirectory, "terminal");
+    assert.deepEqual(terminals.map((terminal) => terminal.face), ["error"]);
+    assert.ok(typeof terminals[0]?.body?.diagnostic === "string" && terminals[0].body.diagnostic.length > 0);
+    assert.equal(terminals[0]?.body?.role, "diarist");
+    assert.equal(terminals[0]?.body?.runId, runId);
     assert.deepEqual(submittedParams(ticketPlacement.runDirectory), result.terminal!.submissions);
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });

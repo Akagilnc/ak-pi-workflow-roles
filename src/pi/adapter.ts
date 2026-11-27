@@ -17,10 +17,6 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
-import { runDirectoryFromHostContext } from "../host-contracts.ts";
-import { sitianReportSafe } from "../host-session-record.ts";
-import { isTerminatingToolName } from "../package-contracts/terminating-tools.ts";
-import { sessionFileOf } from "../role-run-placement.ts";
 import { projectCorrectableExecuteRejection } from "../submission-correctable-error.ts";
 import {
   WorkerCommitReminderError,
@@ -113,12 +109,6 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
   const keepalive = createOAuthKeepalive(options.oauthKeepalive);
-  // Pi chains the before_agent_start handlers, each seeing the prompt the one before left; the
-  // prompt Pi sends is the one the last registered handler leaves. Only that handler's result is
-  // what a start was given, so only it records.
-  let beforeAgentStartHandlers = 0;
-  // Parameters of registered terminating tools — the schema Pi was handed.
-  const registeredToolParameters = new Map<string, unknown>();
   // Pi createContext() is fresh per emit/tool (runner.js). Do not cache HostContext by
   // ExtensionContext identity. Share only this-turn 传召词 / 催交 on the adapter instance;
   // model and identity pointers stay live on each fresh projection (#1199).
@@ -185,10 +175,7 @@ export function createPiRoleHostAdapter(
     },
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),
-    registerTool: (tool) => {
-      registeredToolParameters.set(tool.name, tool.parameters);
-      return pi.registerTool(toPiToolDefinition(tool, projectPiContext));
-    },
+    registerTool: (tool) => pi.registerTool(toPiToolDefinition(tool, projectPiContext)),
     getAllTools: () => pi.getAllTools().map(({ name, sourceInfo }) => ({
       name,
       ...(sourceInfo?.path === undefined ? {} : { sourceInfo: { path: sourceInfo.path } }),
@@ -199,37 +186,9 @@ export function createPiRoleHostAdapter(
       const context = projectPiContext;
       if (registration[0] === "before_agent_start") {
         const [, handler] = registration;
-        const position = beforeAgentStartHandlers;
-        beforeAgentStartHandlers += 1;
         pi.on("before_agent_start", (value, ctx) => {
           const projected = context(ctx);
-          const fold = (settled: unknown) => {
-            const folded = foldBeforeAgentStartReturn(settled, value.systemPrompt);
-            const runDirectory = runDirectoryFromHostContext(projected);
-            if (runDirectory !== undefined && position === beforeAgentStartHandlers - 1) {
-              const delivered = (folded as { systemPrompt?: string } | undefined)?.systemPrompt ?? value.systemPrompt;
-              // Record the same parameters object Pi was handed — not a
-              // headless draft-07 projection of another host's transport.
-              let outputSchema: unknown;
-              for (const [name, parameters] of registeredToolParameters) {
-                if (!isTerminatingToolName(name)) continue;
-                outputSchema = parameters;
-                break;
-              }
-              // History write failures do not stop a run (#833): declared, and Pi starts.
-              sitianReportSafe({
-                level: "event",
-                kind: "turn-delivery",
-                sessionParent: sessionFileOf(runDirectory),
-                source: "pi-adapter",
-                payload: {
-                  systemPrompt: delivered,
-                  ...(outputSchema === undefined ? {} : { outputSchema }),
-                },
-              });
-            }
-            return folded;
-          };
+          const fold = (settled: unknown) => foldBeforeAgentStartReturn(settled, value.systemPrompt);
           // Pi 1.2+ also fires this for runs started by sendMessage(triggerTurn): messageType "custom", no prompt.
           // Older Pi sends no messageType at all, so only an explicit "custom" drops the prompt.
           const result = handler({ ...(value.messageType === "custom" ? {} : { prompt: value.prompt }), systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, projected);
@@ -264,15 +223,6 @@ export function createPiRoleHostAdapter(
             ...("toolName" in message && typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
             ...("isError" in message && typeof message.isError === "boolean" ? { isError: message.isError } : {}),
             ...("stopReason" in message && typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
-          })),
-        }, context(ctx)));
-      } else if (registration[0] === "turn_end") {
-        const [, handler] = registration;
-        pi.on("turn_end", (value, ctx) => handler({
-          turnIndex: value.turnIndex,
-          calls: value.toolResults.map((result) => ({
-            toolCallId: result.toolCallId,
-            toolName: result.toolName,
           })),
         }, context(ctx)));
       } else if (registration[0] === "agent_settled") {

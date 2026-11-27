@@ -9,7 +9,6 @@ import {
   disposeExternalRoleTurn,
   externalHostFailure as failure,
   raceAgainstHostAbort,
-  recordTurnDelivery,
   retainPackageFaultBesideLivePlacement,
   syncTurnRequestLivePlacement,
   trySyncTurnRequestLivePlacement,
@@ -19,7 +18,6 @@ import { projectThrownFailureLeaf } from "../public-cli/settlement.ts";
 
 import {
   copyAndRecordHostDossier,
-  recordNativeSessionPointer,
 } from "../host-session-record.ts";
 import {
   renderSystemPromptOverride,
@@ -211,9 +209,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     let sessionId: string | undefined;
     let sessionOpened = false;
     let accepted = false;
-    // Re-resolve after mid-turn report-ticket may have moved principal (#1171).
-    const liveSessionParent = (): string =>
-      config.sessionIdentity.resolveSessionFile(request.principal);
     let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
     let reportedFailure: RoleTurnResult["knownFailure"];
     let packageFailure: RoleTurnResult["knownFailure"];
@@ -259,9 +254,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           const loadedId = typeof loaded.sessionId === "string" && loaded.sessionId !== ""
             ? loaded.sessionId
             : bindSessionId;
-          if (config.hostName !== "hermes") recordNativeSessionPointer({
-            host: config.hostName, sessionId: loadedId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home,
-          });
           return loadedId;
         };
         let sessionReady = true;
@@ -288,9 +280,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             outcome = failure("session", "AcpSessionFailure", "session-id-missing");
             sessionReady = false;
           } else {
-            if (config.hostName !== "hermes") recordNativeSessionPointer({
-              host: config.hostName, sessionId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home,
-            });
             sessionOpened = true;
             await config.sessionIdentity.bind(request.principal, sessionId);
           }
@@ -312,14 +301,8 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           roundLimitName: "AcpRoundLimit",
           currentSessionId: () => sessionId,
           async runRound({ prompt, abortSignal }) {
-            // One history row per actual session/prompt start (催交回合各算一次).
-            // MCP advertises tool.parameters; prepared.jsonSchema is the headless
-            // draft-07 stamp of that clone — record the delivered parameters face.
-            const { $schema: _headlessStamp, ...deliveredSchema } = prepared.jsonSchema;
-            await recordTurnDelivery(await syncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority), {
-              systemPrompt: systemPromptOverride,
-              outputSchema: deliveredSchema,
-            }, "acp-host");
+            // Re-resolve after mid-turn report-ticket may have moved the leg (#1171).
+            await syncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority);
             let result: Readonly<Record<string, unknown>>;
             result = await raceAgainstHostAbort(
               activeConnection.request("session/prompt", {

@@ -44,8 +44,8 @@ test("the terminal is read per run directory: absent until written, each face pr
     assert.deepEqual(readRunTerminal(dirA), { status: "present", face: "error", body: errorBody });
     assert.deepEqual(readRunTerminal(dirB), { status: "absent" }, "a sibling run's terminal must not bind to another run");
 
-    // Each face reads back as written; the last write wins (no clearing logic).
-    // Report outcomes keep payloads (or attemptHistoryIdentity) — a gap is unreadable (#1161 R2-gap).
+    // Each face reads back as written; the last write wins (no clearing logic). A report
+    // face exists only in books written before #1299.
     const reportBody = {
       role: "coder",
       runId: runB,
@@ -74,8 +74,6 @@ test("a terminal section without a known face, a typed object body or a producer
       ["report", "not an object"],
       ["report", null],
       ["report", ["role"]],
-      // Accepted report with neither payloads nor attemptHistoryIdentity is a reader gap.
-      ["report", { role: "coder", outcome: { kind: "accepted", role: "coder" } }],
       ["error", { kind: "error" }],
       ["error", { role: "  " }],
       ["no_receipt", { role: 7 }],

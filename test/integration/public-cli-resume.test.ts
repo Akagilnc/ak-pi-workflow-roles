@@ -265,9 +265,8 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
       assert.ok(typeof note === "string" && note !== "");
       const admitted = (await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority)).admitted;
-      const historyOutcomes = () => historyPayloads<{ outcome?: { kind?: string } }>(runDirectory, "attempt-history")
-        .map((payload) => payload.outcome?.kind);
-      assert.deepEqual(historyOutcomes(), [], "a seal is not copied into settlement history");
+      const terminalFaces = () => statePayloads<{ face?: string }>(runDirectory, "terminal").map((row) => row.face);
+      assert.deepEqual(terminalFaces(), [], "an accepted seal writes no terminal row");
 
       // An accepted terminal appends no terminal row; the refused write was the run-state.
       assert.deepEqual(statePayloads(runDirectory, "terminal"), []);
@@ -303,11 +302,11 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.equal(rebuilt.exitCode, 0);
       assert.equal(rebuilt.terminal!.roleOutcome.kind, "no_receipt");
       assert.deepEqual(rebuilt.terminal!.submissions, [{ status: "converged", note: "lawful despite later publication failure" }]);
-      assert.deepEqual(historyOutcomes(), ["no_receipt"], "bare resume does not record a duplicate seal");
+      assert.deepEqual(terminalFaces(), ["no_receipt"], "bare resume does not record a duplicate seal");
       assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
       await trySettlePublicSeat(admitted, piDurablePrincipalAuthority, undefined);
-      assert.deepEqual(historyOutcomes(), ["no_receipt"], "re-reading the latest seal must not append another attempt");
+      assert.deepEqual(terminalFaces(), ["no_receipt"], "re-reading the latest seal must not append another attempt");
     } finally {
       await restoreWritable();
     }
@@ -464,9 +463,6 @@ test("lawful settlement keeps the accepted terminal when publication fails; a ba
       assert.equal(resumeResult.terminal?.roleOutcome.kind, "failure");
       assert.equal(resumeResult.terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
       assert.deepEqual(resumeResult.terminal.submissions, result.terminal!.submissions);
-      const note = sessionFaultNotes(sessionFileOf(runDirectory))[0]?.diagnostic;
-      assert.ok(typeof note === "string" && note !== "");
-
     } finally {
       await restoreWritable();
     }

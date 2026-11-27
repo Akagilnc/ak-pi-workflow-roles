@@ -19,7 +19,6 @@ import {
   externalHostFailure as failure,
   hostAbortedError,
   isHostAbortedError,
-  recordTurnDelivery,
   retainPackageFaultBesideLivePlacement,
   syncTurnRequestLivePlacement,
   trySyncTurnRequestLivePlacement,
@@ -35,7 +34,6 @@ import {
 
 import {
   copyAndRecordHostDossier,
-  recordNativeSessionPointer,
 } from "../host-session-record.ts";
 import {
   closeJsonSchemaForCodex,
@@ -465,26 +463,19 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       // config.env owns package-root/child env; do not re-spread process.env over it.
       const env: NodeJS.ProcessEnv = { ...process.env, ...(config.env ?? {}) };
       // CLI start-up inputs (system prompt / schema / MCP config files) are not
-      // dossier: they live in a throwaway directory, and what was delivered is
-      // recorded once per actual start as a history.jsonl `turn-delivery` row.
-      // Re-resolve after mid-turn report-ticket may have moved principal (#1171).
-      const liveSessionParent = (): string =>
-        config.sessionIdentity.resolveSessionFile(request.principal);
+      // dossier: they live in a throwaway directory.
       const inputsDirectory = await mkdtemp(join(tmpdir(), "ak-role-headless-"));
       const systemPromptPath = join(inputsDirectory, "system-prompt.txt");
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
-      let startedWithSchema: unknown;
       // A setup failure after mkdtemp must not leave the prompt material behind.
       try {
         await writeFile(systemPromptPath, systemPrompt, "utf8");
-        let deliveredSchema: unknown;
         if (codex) {
           // #1148: Codex --output-schema requires a native strict transport schema.
           // Project from the unique open declaration; do not alter package receipt rules.
           outputSchemaPath = join(inputsDirectory, "output-schema.json");
-          deliveredSchema = closeJsonSchemaForCodex(prepared.jsonSchema);
-          await writeFile(outputSchemaPath, `${JSON.stringify(deliveredSchema, null, 2)}\n`, "utf8");
+          await writeFile(outputSchemaPath, `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`, "utf8");
         } else {
           mcpConfigPath = join(inputsDirectory, "mcp-config.json");
           await writeFile(
@@ -492,9 +483,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
             "utf8",
           );
-          deliveredSchema = prepared.jsonSchema;
         }
-        startedWithSchema = deliveredSchema;
       } catch (setupError) {
         try {
           await rm(inputsDirectory, { recursive: true, force: true });
@@ -540,23 +529,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           const codexObserver = codex ? createCodexExecTurnObserver() : undefined;
-          let pointerRecorded = false;
-          let codexIdObserved = false;
-          if (sessionId !== undefined && sessionId !== "") {
-            pointerRecorded = recordNativeSessionPointer({
-              host: config.hostName,
-              sessionId,
-              cwd: request.cwd,
-              sessionParent: liveSessionParent(),
-              home: request.home,
-            }) !== undefined;
-          }
-
-          // What this CLI start was given: one history record per start.
-          await recordTurnDelivery(await syncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority), {
-            systemPrompt,
-            ...(startedWithSchema === undefined ? {} : { outputSchema: startedWithSchema }),
-          }, "headless-host");
+          // Re-resolve after mid-turn report-ticket may have moved the leg (#1171).
+          await syncTurnRequestLivePlacement(request, config.sessionIdentity.principalAuthority);
           let spawned: HeadlessSpawnResult;
           try {
             spawned = await spawnHeadlessTurn({
@@ -580,34 +554,12 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 // One bounded live seam owns both recording and host-specific reduction.
                 codexObserver?.observe(event);
                 if (!codex && typeof event === "object" && event !== null && "session_id" in event
-                  && typeof event.session_id === "string" && event.session_id !== "" && event.session_id !== sessionId) {
+                  && typeof event.session_id === "string" && event.session_id !== "") {
                   sessionId = event.session_id;
-                  recordNativeSessionPointer({ host: config.hostName, sessionId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home });
-                }
-                if (codex && !codexIdObserved) {
-                  const tid = codexObserver?.result().threadId;
-                  if (tid !== undefined && tid !== "") {
-                    codexIdObserved = true;
-                    pointerRecorded = recordNativeSessionPointer({
-                      host: config.hostName,
-                      sessionId: tid,
-                      cwd: request.cwd,
-                      sessionParent: liveSessionParent(),
-                      home: request.home,
-                    }) !== undefined;
-                  }
                 }
               },
             });
-            const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
-            exitedSessionId = roundSessionId;
-            if (codex && roundSessionId !== undefined && roundSessionId !== "" && !pointerRecorded) {
-              try {
-                recordNativeSessionPointer({ host: config.hostName, sessionId: roundSessionId, cwd: request.cwd, sessionParent: liveSessionParent(), home: request.home });
-              } catch (error) {
-                spawned.packageErrors = [...spawned.packageErrors, error];
-              }
-            }
+            exitedSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
           } catch (error) {
             if (isHostAbortedError(error)) throw error;
             const message = errorText(error);

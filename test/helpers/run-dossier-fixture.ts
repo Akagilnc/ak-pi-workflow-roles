@@ -175,24 +175,25 @@ export function reportedReceipts(terminal: {
 
 /**
  * #1161 / #1165 / #1199: bound-at-rest leaf names after accepted seal
- * (dossier + leg-local `receipts/` / `session/`). Sole list of the five;
+ * (dossier + leg-local `receipts/` / `session/`). Sole list of the four;
  * allowlist below spreads this and adds unbound / seat-only leaves.
  */
 export const RUN_DIRECTORY_BOUND_AT_REST_ENTRIES = [
   "history.jsonl",
-  "log.jsonl",
   "receipts",
   "session",
   "state.jsonl",
 ] as const;
 
 /**
- * Leaf names a run directory may hold at rest: bound five plus unbound
- * staging `progress.jsonl` and seat input `merger-input.json`.
+ * Leaf names a run directory may hold at rest: bound four plus `log.jsonl` (only
+ * when something went wrong), unbound staging `progress.jsonl` and seat input
+ * `merger-input.json`.
  * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
  */
 export const RUN_DIRECTORY_ALLOWED_ENTRIES = [
   ...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
+  "log.jsonl",
   "progress.jsonl",
   "merger-input.json",
 ] as const;

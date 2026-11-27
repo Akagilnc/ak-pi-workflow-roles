@@ -1238,14 +1238,6 @@ export function createRoleRuntimeExtension(
           RECEIPT_DELIVERY_REQUEST_ENTRY,
           scopeId.length > 0 ? { invocationScopeId: scopeId } : undefined,
         );
-        sitianReportSafe({
-          level: "event",
-          kind: "receipt-delivery",
-          cwd: ctx.cwd,
-          sessionParent: ctx.sessionManager.getSessionFile(),
-          payload: { type: "ak-receipt-delivery-request" },
-          source: "role-runtime",
-        });
         envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
           content: deliveryContent,
@@ -1590,14 +1582,6 @@ export function createRoleRuntimeExtension(
               subjectKey: navigatorSubjectKey,
             };
             envelopeHost.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
-            sitianReportSafe({
-              level: "event",
-              kind: "attendance",
-              cwd: ctx.cwd,
-              sessionParent: ctx.sessionManager.getSessionFile(),
-              payload: { type: NAVIGATOR_INVOCATION_ENTRY, ...data },
-              source: "role-runtime",
-            });
           }
           const activation = navigatorActivation;
           navigatorAttendance = await dependencies.createNavigatorAttendance({

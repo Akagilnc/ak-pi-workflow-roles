@@ -150,13 +150,6 @@ export function readPageSync(runDirectory: string, section: CurrentSection): Rec
   return lastPagePayload(readStateControlRowsSync(runDirectory), PAGE_ROW_KIND[section], runDirectory);
 }
 
-/** Every row of history.jsonl, in order; a file that cannot be read throws. */
-export function readHistoryRowsSync(runDirectory: string): readonly Record<string, unknown>[] {
-  const history = readRowFile(join(runDirectory, RUN_HISTORY_FILE));
-  if (history.fault !== undefined) throw new Error(`${RUN_HISTORY_FILE} is unreadable (${history.fault}): ${runDirectory}`);
-  return history.rows;
-}
-
 /**
  * Every row of state.jsonl, in order; a file that cannot be read throws.
  * Wide observation path: decoder diagnostics are not a hard refuse.

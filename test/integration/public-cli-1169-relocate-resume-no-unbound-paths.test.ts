@@ -245,7 +245,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     );
 
     const topLevel = new Set(await readdir(ticketRunDirectory));
-    for (const required of ["history.jsonl", "state.jsonl", "log.jsonl"]) {
+    for (const required of ["history.jsonl", "state.jsonl"]) {
       assert.equal(topLevel.has(required), true, `topology requires ${required}`);
     }
     // #1199: session originals stay under the leg (`<run>/session`).

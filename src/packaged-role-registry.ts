@@ -58,12 +58,6 @@ export function receiptSeat(
   return seat === undefined ? undefined : { seat, source: "invocation" };
 }
 
-/** Success-terminal facts that still differ by seat. */
-export type PackagedArtifactFace = {
-  readonly reportPhase?: true;
-  readonly doctorReportFacts?: true;
-};
-
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
   "CLAUDE.md",
@@ -141,9 +135,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "diagnosing-bugs",
     phases: ["plan", "apply"],
     outputTool: FIXER_OUTPUT_TOOL_NAME,
-    artifactFace: {
-      reportPhase: true,
-    },
     boardPlacement: "marshal",
     activationFlags: [
       { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
@@ -169,9 +160,6 @@ export const PUBLIC_ROLE_RECORDS = [
     boardPlacement: "coder",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
-    artifactFace: {
-      reportPhase: true,
-    },
     activationFlags: [
       { field: "phase", flag: "ak-coder-phase", binds: "phase" },
     ],
@@ -200,8 +188,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
-    artifactFace: {
-    },
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
     transportPrompt: "skill-args",
     boardPlacement: "marshal",
@@ -231,8 +217,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
-    artifactFace: {
-    },
     boardPlacement: "collector",
     /** Taishi acceptance is a typed groups array, not a status leaf. */
     analystTerminal: "groups",
@@ -259,9 +243,6 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
     auditTool: DOCTOR_AUDIT_TOOL_NAME,
-    artifactFace: {
-      doctorReportFacts: true,
-    },
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
@@ -282,8 +263,6 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
-    artifactFace: {
-    },
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },
     ],

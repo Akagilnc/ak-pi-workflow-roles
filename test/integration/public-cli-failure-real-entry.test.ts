@@ -307,18 +307,14 @@ test("production knownFailure channel reaches settlement as provider with typed 
     const errorRef = result.terminal!.artifacts.find((artifact) => artifact.kind === "error");
     const errorBody = terminalBodyAt(errorRef!.path, "error") as {
       stderr?: string;
+      diagnostic?: string;
       packageFact?: { exitCode?: number; timedOut?: boolean; signal?: string };
     };
     assert.equal(errorBody.stderr, hostStderr);
     assert.equal(errorBody.packageFact?.exitCode, 17);
     assert.equal(errorBody.packageFact?.timedOut, true);
     assert.equal(errorBody.packageFact?.signal, "SIGTERM");
-    const history = historyPayloads<{
-      outcome?: { stderr?: string; diagnostic?: string; packageFact?: { exitCode?: number } };
-    }>(dirname(errorRef!.path), "attempt-history").map((row) => row.outcome);
-    assert.equal(history.at(-1)?.diagnostic, hostDiagnostic);
-    assert.equal(history.at(-1)?.stderr, hostStderr);
-    assert.equal(history.at(-1)?.packageFact?.exitCode, 17);
+    assert.equal(errorBody.diagnostic, hostDiagnostic);
   });
 });
 

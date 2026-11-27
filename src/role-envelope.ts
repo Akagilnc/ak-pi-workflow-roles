@@ -410,7 +410,7 @@ export async function prepareRoleEnvelope(options: {
   }
   /**
    * Shared terminating/support tool path for MCP relay and headless structured_output.
-   * Books the call, runs execute, projects tool_result; does not emit turn_end (closeRound).
+   * Books the call, runs execute, projects tool_result.
    */
   async function invokeAkTool(name: string, args: unknown = {}): Promise<{
     content: ContentPart[];
@@ -648,12 +648,8 @@ export async function prepareRoleEnvelope(options: {
     await invokeAkTool(terminatingToolName, params);
   };
   const closeRound: PreparedRoleTurn["closeRound"] = async () => {
-    // Typed round boundary: hand the complete call list to the shared ledger once.
-    if (calls.length > 0) {
-      const roundCalls = [...calls];
-      calls.length = 0;
-      await emit("turn_end", { turnIndex: 0, calls: roundCalls });
-    }
+    // Typed round boundary: the next round starts with no calls.
+    calls.length = 0;
     // Infrastructure failure outranks accepted closure / correctable retry (#593).
     if (infrastructureRoundFailure !== undefined) {
       durableFailureHandedToCloseRound = true;

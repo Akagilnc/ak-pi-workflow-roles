@@ -41,7 +41,6 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
 
     await mkdir(logPath);
     let declared = false;
-    let pointerDeclared = false;
     const origStderrWrite = process.stderr.write;
     process.stderr.write = (() => {
       declared = true;
@@ -54,8 +53,6 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
           if (method === "initialize") return { protocolVersion: 1 };
           if (method === "session/new") return { sessionId: "acp-sess" };
           if (method === "session/prompt") {
-            // The pointer is written before prompting; the dossier is recorded after exit.
-            pointerDeclared = declared;
             declared = false;
             return { stopReason: "end_turn" };
           }
@@ -91,7 +88,6 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
       const result = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
-      assert.equal(pointerDeclared, true, "pointer");
       assert.equal(declared, true, "warning");
 
       const native = join(ledger.home, ".grok", "sessions", encodeURIComponent(ledger.home), "acp-sess");
@@ -99,12 +95,10 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
       await writeFile(join(native, "chat_history.jsonl"), "native chat\n");
       await writeFile(join(native, "usage.json"), "{}\n");
       declared = false;
-      pointerDeclared = false;
       const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
       assert.equal(copied.code, 0);
-      assert.equal(pointerDeclared, true, "pointer");
-      assert.equal(declared, true, "copy");
+      assert.equal(declared, false, "a copy that lands writes no row");
       const landing = join(sessionDir, "grok-build");
       assert.equal(await readFile(join(landing, "chat_history.jsonl"), "utf8"), "native chat\n");
       assert.equal(await readFile(join(landing, "usage.json"), "utf8"), "{}\n");

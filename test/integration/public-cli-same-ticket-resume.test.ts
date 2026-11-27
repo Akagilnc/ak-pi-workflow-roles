@@ -17,6 +17,7 @@ import { loadNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { readReceipt, readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   historyPayloads,
+  readHistoryRows,
   statePayloads,
   readStatePage,
   lockStateRows,
@@ -779,8 +780,8 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
   // Re-projecting a settled child is a read, not a second host attempt.
   await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
   await trySettlePublicSeat(settledChild.admitted, piDurablePrincipalAuthority, undefined);
-  const firstHistory = () => historyPayloads(seen[0]!.runDirectory, "attempt-history");
-  assert.deepEqual(firstHistory(), []);
+  const firstTerminalFaces = () => statePayloads<{ face?: string }>(seen[0]!.runDirectory, "terminal").map((row) => row.face);
+  assert.deepEqual(firstTerminalFaces(), []);
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.kind, "initial");
   assert.equal(seen[0]!.model?.model, "birth-auditor");
@@ -848,7 +849,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     summonAuditor: async () => ({ exitCode: second.exitCode, terminal: second.terminal! }),
   });
   assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
-  assert.deepEqual(firstHistory().map(row => (row.outcome as { kind: string }).kind), ["no_receipt"]);
+  assert.deepEqual(firstTerminalFaces(), ["no_receipt"]);
   assert.equal(
     (readStatePage(firstRunDirectory, "terminal") as { face?: string }).face,
     "no_receipt",
@@ -1143,6 +1144,11 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     (await readdir(coderRunDirectory)).sort(),
     [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES].sort(),
   );
+  // #1299: history keeps only the submission ledger and its progress rows; an accepted
+  // court writes no terminal row; no log.jsonl is written when nothing went wrong.
+  assert.deepEqual(readHistoryRows(coderRunDirectory).map((row) => row.kind)
+    .filter((kind) => !["candidate", "outcome", "sealed", "progress"].includes(String(kind))), []);
+  assert.deepEqual(statePayloads(coderRunDirectory, "terminal"), []);
   // #1199: session originals stay under the leg (`<run>/session`).
   assert.deepEqual(
     (await readdir(sessionDirectoryOf(coderRunDirectory))).sort(),

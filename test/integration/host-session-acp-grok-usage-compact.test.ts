@@ -131,21 +131,8 @@ test("grok-build ACP host copies chat_history.jsonl and usage.json to session di
     const copiedUsage = await readFile(join(landingDir, "usage.json"), "utf8");
     assert.equal(copiedUsage, usageContent);
 
-    // 2. Verify Sitian records
-    const { records } = await hostSessionRecords(ledger.runDirectory);
-    assert.equal(records.length, 2);
-
-    const pointerRec = records[0]!;
-    assert.equal(pointerRec.level, "event");
-    assert.equal(pointerRec.kind, HOST_SESSION_RECORD_KIND);
-    assert.equal((pointerRec.payload as { type: string }).type, "native-session-pointer");
-    assert.equal((pointerRec.payload as { nativePath: string }).nativePath, grokNativeDir);
-
-    const copyRec = records[1]!;
-    assert.equal(copyRec.level, "event");
-    assert.equal(copyRec.kind, HOST_SESSION_RECORD_KIND);
-    assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
-    assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingDir);
+    // 2. A copied original leaves no pointer or landing row (#1299).
+    assert.deepEqual((await hostSessionRecords(ledger.runDirectory)).records, []);
 
     // 3. A second exit overwrites the same single original with the new source bytes.
     const chatContent2 = '{"role":"assistant","content":"second exit"}\n';
@@ -205,10 +192,13 @@ test("grok-build dossier copy failure appends warning without altering turn (ADR
     );
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
+    // The one row is the warning, naming the host original it could not copy.
     const { records } = await hostSessionRecords(ledger.runDirectory);
-    assert.equal((records[0]?.payload as { type?: string })?.type, "native-session-pointer");
-    assert.equal((records[1]?.payload as { type?: string })?.type, "native-session-warning");
-    assert.ok((records[1]?.payload as { error?: string })?.error);
+    assert.equal(records.length, 1);
+    const warning = records[0]?.payload as { type?: string; nativePath?: string; error?: string };
+    assert.equal(warning.type, "native-session-warning");
+    assert.equal(warning.nativePath, join(ledger.home, ".grok", "sessions", encodeURIComponent(ledger.home), "missing-sess"));
+    assert.ok(warning.error);
   } finally {
     ledger.dispose();
   }
@@ -250,14 +240,8 @@ fi
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
 
-    const { records } = await hostSessionRecords(ledger.runDirectory);
-    assert.equal(records.length, 2);
-
-    const pointerRec = records[0]!;
-    assert.equal((pointerRec.payload as { type: string }).type, "native-session-pointer");
-
-    const copyRec = records[1]!;
-    assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
+    // The retried copy landed: no warning row.
+    assert.deepEqual((await hostSessionRecords(ledger.runDirectory)).records, []);
     assert.equal((await readFile(attempts, "utf8")).split("\n").filter(Boolean).length, 2);
     assert.equal(await readFile(join(ledger.runDirectory, "session", "grok-build", "usage.json"), "utf8"), "native usage\n");
     } finally {

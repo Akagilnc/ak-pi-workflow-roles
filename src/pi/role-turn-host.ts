@@ -27,7 +27,6 @@ import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 import { readLedgerSessionJsonlLines, readStrictPiSessionJsonl } from "../ledger-session-read.ts";
-import { copyAndRecordHostDossier } from "../host-session-record.ts";
 import {
   resolveLiveRunDirectoryPath,
   retainPackageFaultBesideLivePlacement,
@@ -500,25 +499,17 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
-      // Deliver already-written Pi host facts. Pi lands at session/session.jsonl;
-      // bind records the host session id; copy records the landing.
+      // Deliver already-written Pi host facts. Pi lands at session/session.jsonl
+      // itself (no copy); bind records the host session id.
       try {
         await syncTurnRequestLivePlacement(request, config.principalAuthority);
-        const { sessionFile, sessionDirectory } = config.principalAuthority.decode(request.principal);
+        const { sessionFile } = config.principalAuthority.decode(request.principal);
         const sessionId = await readPiSessionHeaderId(sessionFile);
         if (sessionId !== undefined) {
           await createSessionIdentityAuthority(config.principalAuthority, "pi").bind(
             request.principal,
             sessionId,
           );
-          copyAndRecordHostDossier({
-            host: "pi",
-            sessionId,
-            cwd: request.cwd,
-            sessionDirectory,
-            sessionParent: sessionFile,
-            ...(request.home !== undefined ? { home: request.home } : {}),
-          });
         }
       } catch (error) {
         await retainPackageFaultBesideLivePlacement(request, {

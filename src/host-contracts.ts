@@ -295,7 +295,6 @@ type ToolResultEvent = { toolName: string; toolCallId: string; isError: boolean;
 type SessionStartEvent = { reason: string };
 type AgentEndEvent = { messages: readonly HostEventMessage[] };
 /** Typed closure of exactly one assistant turn; calls come from the host event, not transcript inspection. */
-type TurnEndEvent = { readonly turnIndex: number; readonly calls: readonly ToolExecutionEvent[] };
 type ToolExecutionEvent = { toolName: string; toolCallId: string };
 type ToolExecutionUpdateEvent = ToolExecutionEvent & { partialResult: unknown };
 type ToolExecutionEndEvent = ToolExecutionEvent & { isError: boolean };
@@ -308,7 +307,6 @@ type HostEventMap = {
   session_start: SessionStartEvent;
   session_shutdown: Record<never, never>;
   agent_end: AgentEndEvent;
-  turn_end: TurnEndEvent;
   agent_settled: Record<never, never>;
   tool_execution_start: ToolExecutionEvent;
   tool_execution_update: ToolExecutionUpdateEvent;
@@ -330,7 +328,6 @@ type HostEventResultMap = {
   session_start: void;
   session_shutdown: void;
   agent_end: void;
-  turn_end: void;
   agent_settled: void;
   tool_execution_start: void;
   tool_execution_update: void;
@@ -372,7 +369,6 @@ export interface RoleHost {
   on(event: "session_start", handler: HostEventHandler<"session_start">): void;
   on(event: "session_shutdown", handler: HostEventHandler<"session_shutdown">): void;
   on(event: "agent_end", handler: HostEventHandler<"agent_end">): void;
-  on(event: "turn_end", handler: HostEventHandler<"turn_end">): void;
   on(event: "agent_settled", handler: HostEventHandler<"agent_settled">): void;
   on(event: "tool_execution_start", handler: HostEventHandler<"tool_execution_start">): void;
   on(event: "tool_execution_update", handler: HostEventHandler<"tool_execution_update">): void;
