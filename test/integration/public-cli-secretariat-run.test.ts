@@ -4,7 +4,8 @@
  * submits through production gate. Nested countersign goes through real runtime +
  * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
-import { readStatePage, reportedReceipts, seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -795,10 +796,10 @@ test("#1165 secretariat --attach hands caller path to court diarist as-is", asyn
     const diaristLeaves = (await readdir(join(book, "924", "runs")))
       .filter((name) => name.endsWith("@diarist"));
     assert.equal(diaristLeaves.length, 1);
-    const diaristAdmitted = readStatePage(
+    const diaristAdmitted = (readPageSync(
       join(book, "924", "runs", diaristLeaves[0]!),
       "admitted",
-    ) as { attachments: Array<{ path: string }> };
+    ) ?? {}) as { attachments: Array<{ path: string }> };
     assert.deepEqual(
       diaristAdmitted.attachments.map((attachment) => attachment.path),
       [relativeAttach],
@@ -849,7 +850,7 @@ for (const preliminaryTicket of [null, 923] as const) {
     const book = join(home, ".ak-roles", "books", "project");
     const runName = "01a0sec1025-0000-7000-8000-000000000001@secretariat";
     assert.equal(
-      readStatePage(join(book, "924", "runs", runName), "admitted").ticketNumber,
+      (readPageSync(join(book, "924", "runs", runName), "admitted") ?? {}).ticketNumber,
       924,
       "the completed new-ticket run must be archived under its ticket",
     );

@@ -11,8 +11,8 @@
  * must equal the delivery requests actually issued.
  */
 import { assertRunDirectoryHoldsOnlyDossier } from "../helpers/run-dossier-fixture.ts";
-import { readStatePage, seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
-import { readStateRowsSync } from "../../src/run-dossier.ts";
+import { seedHostSessionId } from "../helpers/run-dossier-fixture.ts";
+import { readStateRowsSync, readPageSync } from "../../src/run-dossier.ts";
 import { runDirectoryFromSessionDirectory } from "../../src/role-run-placement.ts";
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
@@ -216,7 +216,7 @@ test("#1132: a receipt obtained on a催交 turn settles instead of no_receipt", 
       run.seatsDispatched.some((role) => role !== "judge"),
       `催交得卷后必须进入审核席；只见 ${JSON.stringify(run.seatsDispatched)}`,
     );
-    const runState = readStatePage(run.runDirectory!, "runState") as { state: string };
+    const runState = (readPageSync(run.runDirectory!, "runState") ?? {}) as { state: string };
     assert.equal(runState.state, "terminal");
     // Structured ledger surface for this public催交 case (kinds/contents).
     // Same-case base/HEAD per-kind对照 is a one-shot probe, not a second local
@@ -310,7 +310,7 @@ test("#1132: 催交得卷 leaves the run terminal on the manual-resume seat path
     assert.ok(runDirectorySeen !== undefined);
     const liveDirectory =
       (await findRunDirectoryById(home, "1132-countersign-seal")) ?? runDirectorySeen!;
-    const runState = readStatePage(liveDirectory, "runState") as { state: string };
+    const runState = (readPageSync(liveDirectory, "runState") ?? {}) as { state: string };
     assert.equal(runState.state, "terminal", "催交得卷 must leave the run terminal");
   });
 });
@@ -534,7 +534,7 @@ test("#1132: a failing催交 turn records the host failure and leaves the run ou
     )?.failedAttempts;
     assert.ok((failedAttempts?.length ?? 0) >= 1);
     assert.ok(run.runDirectory !== undefined);
-    const runState = readStatePage(run.runDirectory, "runState") as { state: string };
+    const runState = (readPageSync(run.runDirectory, "runState") ?? {}) as { state: string };
     assert.notEqual(runState.state, "running");
   });
 });

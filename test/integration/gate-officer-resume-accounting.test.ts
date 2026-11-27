@@ -6,7 +6,8 @@
  * - Nth review turn: notary fixed dispatch (#1208); other officers bind Nth payload.
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
  */
-import { readStatePage, seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -174,7 +175,7 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
     });
     assert.equal(projected.result.status, "converged");
     assert.ok(projected.summoned?.runDirectory, "nested officer run must mint");
-    const nestedInvocation = readStatePage(projected.summoned!.runDirectory!, "invocation") as {
+    const nestedInvocation = (readPageSync(projected.summoned!.runDirectory!, "invocation") ?? {}) as {
       host?: string; model?: string; provider?: string;
     };
     assert.equal(

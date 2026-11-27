@@ -8,7 +8,8 @@
  * Asserts typed ticketNumber on the admitted + invocation pages only
  * when a typed source provided it.
  */
-import { readStatePage, seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -146,15 +147,15 @@ async function assertDurableTicket(
   runDirectory: string,
   expected: number,
 ): Promise<void> {
-  const admitted = readStatePage(runDirectory, "admitted") as { ticketNumber?: number };
-  const invocation = readStatePage(runDirectory, "invocation") as { ticketNumber?: number };
+  const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as { ticketNumber?: number };
+  const invocation = (readPageSync(runDirectory, "invocation") ?? {}) as { ticketNumber?: number };
   assert.equal(admitted.ticketNumber, expected);
   assert.equal(invocation.ticketNumber, expected);
 }
 
 async function assertDurableUnbound(runDirectory: string): Promise<void> {
-  const admitted = readStatePage(runDirectory, "admitted") as { ticketNumber?: number };
-  const invocation = readStatePage(runDirectory, "invocation") as { ticketNumber?: number };
+  const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as { ticketNumber?: number };
+  const invocation = (readPageSync(runDirectory, "invocation") ?? {}) as { ticketNumber?: number };
   assert.equal(admitted.ticketNumber, undefined);
   assert.equal(invocation.ticketNumber, undefined);
 }

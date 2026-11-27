@@ -3,7 +3,7 @@
  * public resume entry: same session principal reopened, each seat settles its
  * own typed terminal. Shortest deterministic four-seat dispatch-table coverage.
  */
-import { readStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import {
   mkdir,
@@ -201,7 +201,7 @@ for (const spec of SEAT_SPECS) {
         "utf8",
       );
 
-      const admittedRequest = readStatePage(admitted.runDirectory, "admitted");
+      const admittedRequest = (readPageSync(admitted.runDirectory, "admitted") ?? {});
 
       const baseRunner: LegacyFauxPiRunner = scriptedTerminatingToolSession({
         role: spec.role,

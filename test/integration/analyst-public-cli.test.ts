@@ -28,7 +28,8 @@ import {
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { withBusinessRepo, withAnalystHome as withTempHome } from "../helpers/analyst-fixture-kit.ts";
 import { environmentFixtures, withTempRoot, withProcessCwd } from "../helpers/environment-fixtures.ts";
-import { seedStatePage, seedTerminal, readStatePage } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage, seedTerminal } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const test = base.extend(environmentFixtures);
@@ -503,7 +504,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
 
         // Package does not settle or delete for the caller.
         assert.equal(
-          readStatePage(deadDir, "runState").state,
+          (readPageSync(deadDir, "runState") ?? {}).state,
           "running",
         );
       });

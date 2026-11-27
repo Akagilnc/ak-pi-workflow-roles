@@ -44,10 +44,10 @@ import { TICKET_PROVENANCE_KIND } from "../../src/ticket-provenance-contracts.ts
 import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import {
   historyPayloads,
-  readStatePage,
   reportedReceipts,
   seedStatePage,
 } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { withOutsideTempRoot } from "../helpers/environment-fixtures.ts";
 import { captureIo } from "../helpers/failure-settlement-kit.ts";
 import { callMcpTool, mcpTokenFromPrepared } from "../helpers/mcp-tool-call.ts";
@@ -260,7 +260,7 @@ async function seedUnboundChildWithStaging(input: {
   const childDir = join(dirname(input.parentDir), formatRunLeaf(input.childRunId, "diarist"));
   await mkdir(sessionDirectoryOf(childDir), { recursive: true });
   const identity = { bookKey: input.bookKey, projectRoot: input.project };
-  const parentAdmitted = readStatePage(input.parentDir, "admitted");
+  const parentAdmitted = (readPageSync(input.parentDir, "admitted") ?? {});
   seedStatePage(input.parentDir, "admitted", {
     ...parentAdmitted,
     childDiaristRunIds: [input.childRunId],
@@ -337,7 +337,7 @@ test("#1171 pi SessionManager: report relocates; post-relocate append stays unde
       sessionEntries.some((row) => row.customType === "ak_1171_post_relocate"),
       true,
     );
-    assert.equal((readStatePage(live, "admitted") as { ticketNumber?: number }).ticketNumber, TICKET);
+    assert.equal(((readPageSync(live, "admitted") ?? {}) as { ticketNumber?: number }).ticketNumber, TICKET);
   });
 });
 
@@ -476,11 +476,11 @@ for (const caseRow of [
             );
           }
           assert.equal(
-            (readStatePage(placement, "admitted") as { ticketNumber?: number }).ticketNumber,
+            ((readPageSync(placement, "admitted") ?? {}) as { ticketNumber?: number }).ticketNumber,
             TICKET,
           );
           assert.equal(
-            (readStatePage(placement, "invocation") as { ticketNumber?: number }).ticketNumber,
+            ((readPageSync(placement, "invocation") ?? {}) as { ticketNumber?: number }).ticketNumber,
             TICKET,
           );
         }
@@ -558,7 +558,7 @@ test("#1268 unbound submission stays accepted without opening another turn", asy
         const bound = action === "report";
         const leaf = bound ? ticketLeaf(home, bookKey, TICKET, runId, "reviewer") : unboundLeaf(home, bookKey, runId, "reviewer");
         assert.equal(existsSync(leaf), true);
-        assert.equal(readStatePage(leaf, "admitted")?.ticketNumber, bound ? TICKET : undefined);
+        assert.equal((readPageSync(leaf, "admitted") ?? {})?.ticketNumber, bound ? TICKET : undefined);
         const subject = join(home, ".ak-roles", "books", bookKey, bound ? String(TICKET) : "unbound");
         const progress = readTicketProgressLines(subject);
         const rows = progress.filter((row) => row.receipt.startsWith(`runs/${formatRunLeaf(runId, "reviewer")}/`));

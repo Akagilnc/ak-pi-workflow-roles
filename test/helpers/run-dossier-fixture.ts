@@ -1,34 +1,20 @@
 /**
- * Raw run-dossier row access for tests (docs/dossier-topology.md, #1161).
- * Independent of src/run-dossier.ts on purpose: tests assert on the bytes a
- * reader outside the package would see, and seed fixtures without the
- * production writer.
+ * Raw run-dossier row access for tests (docs/dossier-topology.md, #1161): tests
+ * assert on the rows as a reader outside the package sees them. Pages are read
+ * through src/run-dossier.ts `readPageSync`; seeds append raw rows.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import type { CurrentSection } from "../../src/run-dossier.ts";
+import { PAGE_ROW_KIND, type CurrentSection } from "../../src/run-dossier.ts";
 import { reportRunRecord } from "../../src/sitian-facade.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 
-/** The state.jsonl row kind of each whole-page section: the name of the file it replaced. */
-const PAGE_ROW_KIND: Readonly<Record<CurrentSection, string>> = {
-  invocation: "invocation",
-  admitted: "admitted-request",
-  runState: "run-state",
-  terminal: "terminal",
-};
-
-/** One whole-page section as the last state.jsonl row of its kind says (`{}` when absent). */
-export function readStatePage(runDirectory: string, section: CurrentSection): Record<string, unknown> {
-  return statePayloads<Record<string, unknown>>(runDirectory, PAGE_ROW_KIND[section]).at(-1) ?? {};
-}
-
 /**
  * Seed (replace) one whole-page section: one state.jsonl row, appended raw as the
- * appender writes it. Creates the run directory.
+ * appender writes it, so a leg outside a ledger home can be seeded too. Creates the run directory.
  */
 export function seedStatePage(
   runDirectory: string,
@@ -55,9 +41,8 @@ export function seedTerminal(
   seedStatePage(runDirectory, "terminal", { face, at: "2026-08-01T00:00:00.000Z", body });
 }
 
-/** Remove one whole-page section (a leg that never reached it): its rows go. */
-export function clearStatePage(runDirectory: string, section: CurrentSection): void {
-  const kind = PAGE_ROW_KIND[section];
+/** Remove every state.jsonl row of one kind (a leg that never reached that page). */
+export function clearStateRows(runDirectory: string, kind: string): void {
   const statePath = join(runDirectory, "state.jsonl");
   if (!existsSync(statePath)) return;
   const kept = readFileSync(statePath, "utf8").split("\n").filter((line) => {

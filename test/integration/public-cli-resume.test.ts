@@ -1,4 +1,5 @@
-import { historyPayloads, statePayloads, runLogPayloads, readStatePage, sessionFaultNotes, seedStatePage, terminalBodyAt, lockStateRows, unlockStateRows, clearStatePage } from "../helpers/run-dossier-fixture.ts";
+import { historyPayloads, statePayloads, runLogPayloads, sessionFaultNotes, seedStatePage, terminalBodyAt, lockStateRows, unlockStateRows, clearStateRows } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { sessionDirectoryOf, sessionFileOf } from "../../src/role-run-placement.ts";
 import { readTicketProgressLines } from "../../src/ticket-progress.ts";
 
@@ -536,10 +537,10 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
     // Simulate a resumable run-state written before sessionFile was persisted.
-    const legacyState = readStatePage(runDirectory, "runState");
+    const legacyState = (readPageSync(runDirectory, "runState") ?? {});
     delete legacyState.sessionFile;
     seedStatePage(runDirectory, "runState", legacyState);
-    const admittedBefore = readStatePage(runDirectory, "admitted") as {
+    const admittedBefore = (readPageSync(runDirectory, "admitted") ?? {}) as {
       instruction: string;
       attachments: Array<{ path: string }>;
     };
@@ -607,7 +608,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
 
     const { findRunDirectoryById } = await import("../../src/public-cli/run-lifecycle.ts");
     const liveRunDirectory = (await findRunDirectoryById(home, runId)) ?? runDirectory;
-    const admittedAfter = readStatePage(liveRunDirectory, "admitted") as { attachments: Array<{ path: string }> };
+    const admittedAfter = (readPageSync(liveRunDirectory, "admitted") ?? {}) as { attachments: Array<{ path: string }> };
     assert.equal(admittedAfter.attachments[0]!.path, attachmentSrc);
 
     const durable = await readRoleRunState(liveRunDirectory, piDurablePrincipalAuthority);
@@ -1797,7 +1798,7 @@ test("public resume failures persist structured diagnostics", async () => {
         "1058-corrupt-run-state",
         ["resume", "--model", "test/caller-seat:high", "2003", "secretariat"],
       );
-      assert.deepEqual(readStatePage(corruptRunState.runDirectory, "runState"), {});
+      assert.deepEqual((readPageSync(corruptRunState.runDirectory, "runState") ?? {}), {});
 
       const seatSelectionFailure = await seed({
         runId: "1058-seat-selection-failure",
@@ -1858,7 +1859,7 @@ test("public resume failures persist structured diagnostics", async () => {
         projectRoot: project, ticketNumber: 2006, correlationId: "1058-parent-dispatch-failure",
       });
       // The parent leg never had an admitted page: no row, no rendered section.
-      clearStatePage(parent.runDirectory, "admitted");
+      clearStateRows(parent.runDirectory, "admitted-request");
       let childDispatches = 0;
       let parentDispatches = 0;
       const acceptedChildHost = roleTurnHostFromLegacyPiRunner({

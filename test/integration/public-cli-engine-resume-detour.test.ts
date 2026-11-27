@@ -18,7 +18,7 @@
  * Contract surface: `request.engine`, `invocation.engine`, actual-prompt continuation,
  * and engine-session-material presence via the same prepareRoleEnvelope path production uses.
  */
-import { readStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -201,12 +201,12 @@ async function seedMergeProject(project: string): Promise<void> {
 }
 
 async function readInvocationEngine(runDirectory: string): Promise<unknown> {
-  const invocation = readStatePage(runDirectory, "invocation");
+  const invocation = (readPageSync(runDirectory, "invocation") ?? {});
   return invocation.engine;
 }
 
 async function readInvocationEngineModel(runDirectory: string): Promise<unknown> {
-  const invocation = readStatePage(runDirectory, "invocation");
+  const invocation = (readPageSync(runDirectory, "invocation") ?? {});
   return invocation.engineModel;
 }
 

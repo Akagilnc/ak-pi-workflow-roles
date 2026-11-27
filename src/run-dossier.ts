@@ -23,7 +23,7 @@ export { RUN_HISTORY_FILE, RUN_LOG_FILE, RUN_STATE_FILE };
 export type CurrentSection = "invocation" | "admitted" | "runState" | "terminal";
 
 /** The row kind of each whole-page section: the name of the file it replaced. */
-const PAGE_ROW_KIND: Readonly<Record<CurrentSection, string>> = {
+export const PAGE_ROW_KIND: Readonly<Record<CurrentSection, string>> = {
   invocation: "invocation",
   admitted: "admitted-request",
   runState: "run-state",

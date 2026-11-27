@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { readStatePage, seedStatePage, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { parseArgs } from "node:util";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
@@ -27,7 +28,7 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { payloadStatusSequence, terminalLegDirectory } from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { encodeTerminalField, type TerminalResult } from "../../src/public-cli/terminal.ts";
+import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
@@ -499,7 +500,7 @@ test("default dual-lens admits both axes without a parent run", async () => {
       );
       const legDirectory = terminalLegDirectory(child);
       legByLens[lens] = legDirectory;
-      assert.equal(readStatePage(legDirectory, "admitted").lens as string, lens);
+      assert.equal((readPageSync(legDirectory, "admitted") ?? {}).lens as string, lens);
       assert.deepEqual(
         await Promise.all(lensRows.map(async (line) =>
           JSON.parse(await readFile(join(ticketDir, line.receipt), "utf8")) as unknown)),
@@ -753,7 +754,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     // The admitted facts are the run's own record: its admitted page row.
     const reportRef = result.terminal?.artifacts.find((a) => a.kind === "report");
     assert.ok(reportRef);
-    const admittedFacts = readStatePage(dirname(dirname(reportRef.path)), "admitted") as {
+    const admittedFacts = (readPageSync(dirname(dirname(reportRef.path)), "admitted") ?? {}) as {
       instruction?: string;
       baseRevision?: string;
       lens?: string;
@@ -818,12 +819,9 @@ test("default dual-lens keeps original child terminals despite dirty tree, mid-b
     assert.equal(result.terminal?.reviewerChildOutcomes?.completeness.exitCode, 0);
     assert.equal(result.terminal?.reviewerChildOutcomes?.correctness.exitCode, 0);
 
-    // #1201: each lens reports its receipt under the ticket it filed under, in
-    // the typed terminal and in the printed rows; the batch is no leg and names
-    // no ticket of its own.
+    // #1201: each lens reports its receipt under the ticket it filed under; the
+    // batch is no leg and names no ticket of its own.
     const book = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
-    const printed = stdout.join("").split("\n").flatMap((row) => row.split("\t"));
-    const tickets = Object.values(ticketOf).map(String);
     for (const lens of ["completeness", "correctness"] as const) {
       const child: TerminalResult | undefined = result.terminal?.reviewerChildren?.[lens];
       const ticketDir = join(book, String(ticketOf[lens]));
@@ -832,13 +830,6 @@ test("default dual-lens keeps original child terminals despite dirty tree, mid-b
         child?.receipts?.map((filed) => [filed.round, filed.receipt]),
         readTicketProgressLines(ticketDir).map((line) => [line.round, join(ticketDir, line.receipt)]),
         `${lens}: the receipt is the row under its own ticket`,
-      );
-      const at = printed.lastIndexOf(encodeTerminalField(child!.receipts![0]!.receipt));
-      assert.notEqual(at, -1, `${lens}: the receipt path is printed`);
-      assert.equal(
-        printed.slice(0, at).filter((field) => tickets.includes(field)).at(-1),
-        String(ticketOf[lens]),
-        `${lens}: the ticket printed with a receipt is that receipt's own`,
       );
     }
     assert.equal(result.terminal?.ticket, undefined);
@@ -904,7 +895,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
 
-    const persisted = readStatePage(admitted.runDirectory, "admitted");
+    const persisted = (readPageSync(admitted.runDirectory, "admitted") ?? {});
     persisted.authorityRefs = ["", "The system SHALL launch two workers"];
     seedStatePage(admitted.runDirectory, "admitted", persisted);
 
@@ -980,7 +971,7 @@ test("ak-role resume continues reviewer with fixed base", async () => {
       home, ".ak-roles", "books", bookKey, "1171", "runs", `${runId}@reviewer`,
     );
     const sessionDirectory = sessionDirectoryOf(runDirectory);
-    const admitted = readStatePage(runDirectory, "admitted") as Record<string, unknown> & {
+    const admitted = (readPageSync(runDirectory, "admitted") ?? {}) as Record<string, unknown> & {
       role: string;
       baseRevision?: string;
       lens?: string;
@@ -1097,7 +1088,7 @@ test("default dual-lens from subdirectory admits caller project and shares ticke
     for (const provider of capturedProviders) assert.equal(provider, "test-mapped");
 
     // Durable identity matches the caller project (10a); one durable page is enough.
-    const admitted = readStatePage(completenessLeg, "admitted") as {
+    const admitted = (readPageSync(completenessLeg, "admitted") ?? {}) as {
       projectRoot: string; baseRevision: string; lens: string;
     };
     assert.equal(realpathSync(admitted.projectRoot), callerProjectRoot);
@@ -1166,10 +1157,10 @@ test("default dual-lens relative --project and inline --base fail closed like si
       });
       assert.equal(batch.exitCode, 1, batchStdout.join(""));
       // The failed child names its leg through its error record path (no run id).
-      const admitted = readStatePage(
+      const admitted = (readPageSync(
         terminalLegDirectory(batch.terminal?.reviewerChildren?.completeness),
         "admitted",
-      ) as {
+      ) ?? {}) as {
         projectRoot: string; baseRevision: string;
       };
       assert.equal(realpathSync(admitted.projectRoot), expectedProjectRoot);

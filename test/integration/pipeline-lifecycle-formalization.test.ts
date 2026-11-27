@@ -1,4 +1,5 @@
-import { reportedReceipts, readStatePage, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, submittedParams } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -98,7 +99,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     const runDirs = await readdir(runsRoot);
     const judgeRun = runDirs.find((name) => name.endsWith("@judge"));
     const runDirectory = join(runsRoot, judgeRun!);
-    const runState = readStatePage(runDirectory, "runState") as { state: string };
+    const runState = (readPageSync(runDirectory, "runState") ?? {}) as { state: string };
     assert.equal(runState.state, "terminal", "AK-owned run-state must settle as terminal");
 
     // The report the caller opens is the accepted receipt itself (#1299): the

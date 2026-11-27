@@ -19,13 +19,13 @@ import {
   
   readHistoryRows,
   statePayloads,
-  readStatePage,
   lockStateRows,
   unlockStateRows,
   runLogPayloads,
   sessionFaultNotes,
   RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
 } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
@@ -642,7 +642,7 @@ test("#637/#987 public inspector: resume continues open-court settlement without
       openCourtAttemptId,
       "no-seal this-court no_receipt must leave the open court",
     );
-    const admitted = { admitted: readStatePage(runDirectory, "admitted") } as unknown as {
+    const admitted = { admitted: (readPageSync(runDirectory, "admitted") ?? {}) } as unknown as {
       admitted: { attachments: Array<{ path: string }> };
     };
     assert.deepEqual(
@@ -850,7 +850,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
   assert.equal(parentDecision.status, "no-receipt", "parent must not adopt the old pass");
   assert.deepEqual(firstTerminalFaces(), ["no_receipt"]);
   assert.equal(
-    (readStatePage(firstRunDirectory, "terminal") as { face?: string }).face,
+    ((readPageSync(firstRunDirectory, "terminal") ?? {}) as { face?: string }).face,
     "no_receipt",
     "the leg's terminal is now this court's no_receipt (last write wins)",
   );

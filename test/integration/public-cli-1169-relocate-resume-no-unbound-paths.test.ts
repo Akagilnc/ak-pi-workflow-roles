@@ -7,7 +7,7 @@
  * Relocated leg top-level shape matches docs/dossier-topology.md.
  */
 import assert from "node:assert/strict";
-import { readStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -279,7 +279,7 @@ test("#1169 through-line: unbound→ticket→inspector→resume without package 
     );
 
     // Relocated admitted page keeps caller paths opaque.
-    const current = { admitted: readStatePage(ticketRunDirectory, "admitted") } as unknown as {
+    const current = { admitted: (readPageSync(ticketRunDirectory, "admitted") ?? {}) } as unknown as {
       admitted: {
         attachments: Array<Record<string, unknown>>;
         prerequisitesPath?: string;

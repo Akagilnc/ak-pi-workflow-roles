@@ -2,7 +2,8 @@
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
  */
-import { readStatePage, seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import {
@@ -306,7 +307,7 @@ test("notary admits canonical ledger source-run by path; rejects project project
     assert.equal(await treeFingerprint(join(home, ".ak-roles", "books", resolveBookKeyFromGit(project))), beforeProjection);
 
     // Locator consumes retained identity, not the full resumable run record.
-    const state = readStatePage(sourceRunPath, "runState");
+    const state = (readPageSync(sourceRunPath, "runState") ?? {});
     delete state.projectRoot;
     seedStatePage(sourceRunPath, "runState", state);
     const identityOnly = await resolveNotarySourceRunLocator({

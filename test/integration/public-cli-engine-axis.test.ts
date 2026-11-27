@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { readStatePage, seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { seedStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   withNestedTrueUnboundDiaristPiRunner,
@@ -45,10 +46,10 @@ function readRoleInvocation(
   runId: string,
   role: string,
 ): Record<string, unknown> {
-  return readStatePage(
+  return (readPageSync(
     join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@${role}`),
     "invocation",
-  );
+  ) ?? {});
 }
 
 /** Read the durable invocation identity page for a public Judge run (#358). */

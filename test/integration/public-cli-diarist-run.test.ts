@@ -3,7 +3,8 @@
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
-import { submittedParams, statePayloads, readStatePage, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { submittedParams, statePayloads, terminalBodyAt } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -1741,7 +1742,7 @@ test("pre-bound diarist preserves its receipt without code-side reassignment", a
       const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
       const { rows: submissions } = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
       assert.equal((readReceipt(submissions.at(-1)!) as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
-      const admitted = readStatePage(runDir, "admitted");
+      const admitted = (readPageSync(runDir, "admitted") ?? {});
       assert.equal(admitted.ticketNumber, TICKET);
     });
   }

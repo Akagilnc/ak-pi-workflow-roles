@@ -42,7 +42,7 @@ import {
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { seedGitRepository, withOutsideTempRoot, withPrimaryAwareCleanup, withTempRoot } from "../helpers/environment-fixtures.ts";
-import { readStatePage } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
@@ -99,7 +99,7 @@ async function inspectLiveRequest(
         if (request.activation.role === "auditor") {
           priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
           priorSource = process.env.AK_ROLE_AUDITOR_SOURCE_RUN;
-          const admitted = readStatePage(request.runDirectory, "admitted");
+          const admitted = (readPageSync(request.runDirectory, "admitted") ?? {});
           const subject =
             typeof admitted.auditorSubject === "string" && admitted.auditorSubject.trim() !== ""
               ? admitted.auditorSubject
@@ -334,7 +334,7 @@ test("#1166 public gate: four seats share identity and this court's receipt; no 
         assert.equal(inspected.identities.length, 1);
         assert.equal(inspected.identities[0]!.kind, AUDITED_RUN_IDENTITY_KIND);
         // The officer is pointed at this court's receipt, never handed its body.
-        assert.equal(readStatePage(request.runDirectory, "admitted").auditedReceipt, "1.json");
+        assert.equal((readPageSync(request.runDirectory, "admitted") ?? {}).auditedReceipt, "1.json");
         assert.notEqual(inspected.prompt, "");
         if (gate.expectedIdentity !== undefined) {
           assert.deepEqual(inspected.identities[0], {
@@ -454,7 +454,7 @@ test("#1166 direct notary/auditor public entry: same identity, latest arrived re
           assert.equal(request.activation.role, seat.role);
           // Observe startup while the turn is live, before ticket binding moves it.
           inspected = await inspectLiveRequest(request, packageRoot);
-          pinned = readStatePage(request.runDirectory, "admitted").auditedReceipt;
+          pinned = (readPageSync(request.runDirectory, "admitted") ?? {}).auditedReceipt;
           return officerSealHost(seat.role).executeTurn(request);
         }),
       });
@@ -500,7 +500,7 @@ test("#1195 countersign resubmission keeps notary identity and its separate clau
       if (request.activation.role === "notary") {
         // Structured face on the live request before envelope fold.
         notaryPrompts.push(request.continuation.prompt);
-        notaryReceipts.push(readStatePage(request.runDirectory, "admitted").auditedReceipt);
+        notaryReceipts.push((readPageSync(request.runDirectory, "admitted") ?? {}).auditedReceipt);
         const inspected = await inspectLiveRequest(request, packageRoot);
         assert.equal(inspected.identities.length, 1);
         assert.equal((inspected.jsonSchema.required as string[]).includes("clauses"), true);

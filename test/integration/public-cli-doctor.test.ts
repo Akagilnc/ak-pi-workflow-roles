@@ -1,4 +1,5 @@
-import { reportedReceipts, historyPayloads, readStatePage, sessionFaultNotes, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { reportedReceipts, historyPayloads, sessionFaultNotes, runLogPayloads } from "../helpers/run-dossier-fixture.ts";
+import { readPageSync } from "../../src/run-dossier.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
@@ -103,7 +104,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     );
 
     // Case path is the #78 issue runs locator — not a copied case packet.
-    const persisted = readStatePage(admitted.runDirectory, "admitted") as {
+    const persisted = (readPageSync(admitted.runDirectory, "admitted") ?? {}) as {
       role: string;
       issueNumber: number;
       caseRunsPath: string;
@@ -376,10 +377,10 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.deepEqual(reportedReceipts(completed.terminal!), [candidateDetails]);
 
     // ② AK-owned run-state ledger reaches terminal for the real entry.
-    const runState = readStatePage(
+    const runState = (readPageSync(
       join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor"),
       "runState",
-    ) as { state: string };
+    ) ?? {}) as { state: string };
     assert.deepEqual(runState.state, "terminal", "doctor run must settle run-state terminal");
 
     // Refused path reuses the same Terminal settlement owner.
