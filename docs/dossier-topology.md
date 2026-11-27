@@ -15,16 +15,15 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
     │   └── runs/<runId>@<role>/
     │       ├── receipts/<n>.json            回执原件：本腿第 n 份交卷，原样一份
     │       ├── session/                     宿主原件（见下）
-    │       ├── current.json                 当前（整文件重写）
     │       ├── history.jsonl                历史（只追加）
     │       ├── state.jsonl                  状态事实行（只追加；含四整页与 worker 闸状态）
-    │       └── log.jsonl                    司天台流水（只追加）
+    │       └── log.jsonl                    司天台流水（只追加；没有可记的就不建）
     ├── unbound/
     │   └── runs/<runId>@<role>/             同上形状；另有 progress.jsonl 暂存进度行，归位时补轮并入票级 current.jsonl
     └── collector-handbook/
 ```
 
-票级 `current.jsonl` 与腿内 `receipts/` 由 [ADR 0088](adr/0088-ticket-current-replaces-run-dossiers.md) 定。同一 ADR 判撤每腿的 `current.json`／`history.jsonl`／`state.jsonl`／`log.jsonl`；撤掉之前它们照下文所述仍在写。
+票级 `current.jsonl` 与腿内 `receipts/` 由 [ADR 0088](adr/0088-ticket-current-replaces-run-dossiers.md) 定。同一 ADR 判撤每腿的 `current.json`／`history.jsonl`／`state.jsonl`／`log.jsonl`：`current.json` 已由 #1299 删除；其余三个撤掉之前照下文所述仍在写。
 
 簿根只有三类项：
 
@@ -36,38 +35,29 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 归属判据是：删除一张票后仍有意义的记录才留在票外。属于某票的材料均落在该票目录；属于某条腿的记录均落在该腿的 run 目录，不在簿根另设 kind 分区。首次入票的识别腿先落 `unbound/runs/`，取得 typed 票身份（起居郎认票断言、报票号工具 `ak_report_ticket`，或未绑定工作席 typed 回执自报）后整体归位至 `<ticket>/runs/`，不设第五类顶层项。
 
-## 一条腿的五项（current.json、三个行文件、宿主原件）
+## 一条腿的四项（三个行文件、宿主原件）
 
-### `current.json`——当前
-
-审读席默认只读它。它是渲染，不是事实的存放处：下列各项都先成行（`history.jsonl`、`state.jsonl` 或 `log.jsonl`），公开调用接缝每追加一行身份／受理／运行状态／终局／宿主会话绑定，就在那一刻现读三个行文件、每类取最后一行，把整份写出；写出的内容不取自进程里先前拿到的快照，也不取自旧的 `current.json`。同一条腿上可以有两个公开调用并存（在跑的腿与手动续跑），两边都写它；无锁——写出后检查行文件是否又变长，变长了就再渲染，直到不再变长为止；最后一个追加者总会在自己追加之后渲染，所以最后写完的那个已看过全部行，文件最终等于此刻从行重新渲染的结果。某个行文件读不到（缺文件除外）时，其余行文件里的事实照常渲染，读不到的那个文件连同错误码写进顶层 `unreadable`（文件名到错误码），不静默留下旧内容或缺项。角色运行时、宿主适配器、闸不写它。写入优先为临时文件加 rename；若目录权限不允许新建临时文件（仅已有 `current.json` 可写），则降级为对该文件原地覆盖——与合并前运行状态页直接覆写同一处置，不是全权限情形的强制原子替换。
-
-| 分区 | 内容 | 来源行 |
-| --- | --- | --- |
-| `invocation` | 这条腿是谁：席、宿主、模型、项目根、票号、关联号、起跑时的 pi／角色包版本 | `state.jsonl` 里最后一条 `invocation` |
-| `admitted` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针 | 最后一条 `admitted-request` |
-| `runState` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 | 最后一条 `run-state` |
-| `terminal` | 终局：`face` 为 `report`／`error`／`no_receipt`（无卷，#836），`body` 为终局事实；`report` 不含交卷原文，结算按本庭提交账的引用取原稿（ADR 0088）；有庭号时带 `courtAttemptId`。无卷和失败各自的结算记录仍由 `attemptHistoryIdentity` 指认 | 最后一条 `terminal` |
-| `submission` | `latest`：最新一次封存的回执引用 | 最后一条 `sealed` |
-| `host` | `sessions[<host>]` 宿主会话 id（按宿主分格，换宿主续跑不会把一家的 id 交给另一家）与 `original`（宿主原件现在的路径：最近一次复制落在哪个文件名，就取本腿目录 `session/` 下该名；腿归位到票目录后仍指向归位后的原件） | `state.jsonl` 的 `host-session-id` 行；`log.jsonl` 的 `host-session`（`native-session-copy`）行 |
-
-父腿当前卷不再生成 `officers` 区（#1195）：审官结论读该审官自己的卷。历史 `officer-pointer` 行仍可在 `history.jsonl` 中留档并只读解码（太史等）；不迁移旧 books，未来渲染亦不复制该层。
-
-公开调用读自己的事实时读的是这些行（最后一行），不读渲染。
+每腿不再有渲染页 `current.json`（#1299）。公开调用读自己的事实时读行，每类取最后一行。
 
 ### `history.jsonl`——历史
 
 只追加。各行经司天台 appender 写入：
 
-- 原交卷账本：`candidate`、`roundContext`、`outcome`、`sealed`、`post-seal-anomaly`。
-- `attempt-history`：无卷或失败的结算事实；成功封存不再另写结算抄件。
-- `turn-delivery`：宿主每实际起跑一次，发出的系统提示与输出 schema 一行（催交回合各算一次；pi 取最后一个 `before_agent_start` 处理器留下的提示）。写失败只申报、不拦起跑。
-- `officer-pointer`：历史闸传召指针行（只读档案）。生产不再新写（#1195）；不投影进父腿 `current.json`。
+- 原交卷账本：`candidate`、`outcome`、`sealed`、`post-seal-anomaly`。
+- `officer-pointer`：历史闸传召指针行（只读档案）。生产不再新写（#1195）。
 - `progress`：本腿每写下一行进度（封存时、报号归位补轮时）追加一行，带那一行的 `round` 与 `receipt` 引用（封存行另带 `toolCallId`）。结算读它给终局报票、席、轮与回执，不在回合结束后回读票级 `current.jsonl`（#1201）。
 
 ### `state.jsonl`——状态事实行
 
-只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份：`invocation`、`admitted-request`、`run-state`、`terminal`（终局 payload 为 `{face, at, body}`，各面内容见上表），加宿主会话绑定 `host-session-id`（续跑要用它，写失败与 main 上会话绑定文件写失败相同）。
+只追加，经司天台 appender 唯一入口。原身份、受理、运行状态、终局这四样，每被整份改写一次追加一行，内容就是那一份，最后一条是当前的：
+
+| 行 | 内容 |
+| --- | --- |
+| `invocation` | 这条腿是谁：席、宿主、模型、档位、项目根、票号、关联号、起跑时的 pi／角色包版本 |
+| `admitted-request` | 受理时的请求：指令、附件、各席特有输入，及传召的上游腿指针 |
+| `run-state` | 腿的生命周期（admitted／running／resumable／terminal）、开着的庭 |
+| `terminal` | `{face, at, body}`；`face` 只有 `error`（受控失败，`body` 带宿主 stderr 原样）与 `no_receipt`（无卷，#836）。收下交卷不写终局行：收下的事实在回执与票级进度行（#1299）。同一腿可有多条，被自动续跑重试掉的那次也在；有庭号时带 `courtAttemptId` |
+| `host-session-id` | 宿主会话绑定，按宿主分格（续跑要用它，写失败与 main 上会话绑定文件写失败相同） |
 
 另含 worker 交卷闸跨续跑状态（#1178）：`commit-baseline`（提交基线）、`commit-reminder-bounce` / `prefix-reminder-bounce`（已提醒过一次）、`unfinished-reason-bounce`（缺理由催办，带 `invocationScopeId`）。续跑与票号归位后按各类最新一行（催办按当前调用计数）恢复；不另建 `session/worker-submission-gate/` 旁支。
 
@@ -75,7 +65,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ### `log.jsonl`——司天台流水
 
-只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件指针、落点、复制 warning）、`attendance`、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`stderr`（宿主 stderr）、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本。
+只追加，经司天台 appender 唯一入口。每行带自己的 `kind`：`host-session`（宿主原件复制两次都失败时的 warning，带宿主原件路径）、`dispatch-error`、`dispatch-exception`（一次抛异常的派发的完整异常）、`gate`、`engine-detour-call`、`post-admission-diagnostic`、`resume-diagnostic` 等。**审读席不读**；闸、续跑、太史读；查故障才翻。其父会话是某条腿自己 session 的记录都落 `history.jsonl`、`state.jsonl`（上列几种）或这一本。
 
 ### 宿主原件
 
@@ -90,9 +80,10 @@ headless／ACP 腿的 `session/session.jsonl` 另有包自己写的交卷闭合�
 
 ## 读法
 
-- 大理寺、给事中、符宝郎读本票 `records.jsonl` 与被审腿 `current.json`。
+- 审读席读本票 `records.jsonl`、票级 `current.jsonl`、被审腿 `receipts/`。成功腿的结论只在回执里。
+- 身份（宿主、模型、档位）在被审腿 `state.jsonl` 的 `invocation` 行；出错或无卷在同一文件的 `terminal` 行。各取最后一条。
 - 御史台另读被审腿宿主原件，只 grep 工具调用。
-- `history.jsonl` 只在争议涉及早先轮次时读；`state.jsonl` 是 `current.json` 的来源行，不另读；`log.jsonl` 查故障才翻。
+- `history.jsonl` 只在争议涉及早先轮次时读；`log.jsonl` 查故障才翻。
 
 ## 经陛下允许多出来的项
 

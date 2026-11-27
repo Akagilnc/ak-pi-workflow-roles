@@ -1145,7 +1145,7 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
     [...RUN_DIRECTORY_BOUND_AT_REST_ENTRIES].sort(),
   );
   // #1299: history keeps only the submission ledger and its progress rows; an accepted
-  // court writes no terminal row; no log.jsonl is written when nothing went wrong.
+  // court writes no terminal row.
   assert.deepEqual(readHistoryRows(coderRunDirectory).map((row) => row.kind)
     .filter((kind) => !["candidate", "outcome", "sealed", "progress"].includes(String(kind))), []);
   assert.deepEqual(statePayloads(coderRunDirectory, "terminal"), []);

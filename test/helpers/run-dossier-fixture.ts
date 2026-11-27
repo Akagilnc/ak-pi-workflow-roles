@@ -187,7 +187,7 @@ export const RUN_DIRECTORY_BOUND_AT_REST_ENTRIES = [
 
 /**
  * Leaf names a run directory may hold at rest: bound four plus `log.jsonl` (only
- * when something went wrong), unbound staging `progress.jsonl` and seat input
+ * once the leg has a log row), unbound staging `progress.jsonl` and seat input
  * `merger-input.json`.
  * `--attach` / `--request-manifest` leave only caller paths in the admitted record.
  */
