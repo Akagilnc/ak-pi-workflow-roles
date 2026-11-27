@@ -584,7 +584,7 @@ async function relocateRegisteredChildDiarists(input: {
   readonly projectRoot: string;
   readonly ledgerHome: string;
   readonly authority: DurablePrincipalAuthority;
-  readonly parentRows: readonly Record<string, unknown>[] | undefined;
+  readonly parentRows?: readonly Record<string, unknown>[] | undefined;
 }): Promise<void> {
   const childRunIds = pageFromRows(
     input.parentRows ?? readStateControlRowsSync(input.parentRunDirectory),
@@ -634,8 +634,9 @@ async function relocateRegisteredChildDiarists(input: {
 }
 
 /**
- * File a role run under its latest typed ticket identity. A caller that holds
- * the leg's control rows with nothing written since passes them as `rows`.
+ * File a role run under its latest typed ticket identity. A caller whose leg is
+ * already filed and that holds its control rows with nothing written since passes
+ * them as `rows`.
  */
 export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
@@ -684,7 +685,6 @@ export async function relocateAdmittedRunToTicket(
       projectRoot: admitted.projectRoot,
       ledgerHome,
       authority,
-      parentRows: rows,
     });
   }
 
