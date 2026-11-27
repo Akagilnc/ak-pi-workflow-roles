@@ -392,14 +392,14 @@ export function landTicketProgress(input: {
   // so the leg's ledger is not read here.
   let round = "";
   if (!unbound) {
-    // A filed leg's ledger is read once for both the staged rows and the lens.
+    // A filed leg's ledger is read once for both the lens and the staged rows.
     const rows = readStateControlRowsSync(runDirectory);
-    // #1199 R1: bound leg with staged rows left must publish before this seal
-    // takes the next ticket round — optional ticketNumber must not be required.
-    relocateTicketProgressForLeg({ runDirectory }, undefined, rows);
     const lens = input.lens === "completeness" || input.lens === "correctness"
       ? input.lens
       : lensFromRunDirectory(runDirectory, input.role, rows);
+    // #1199 R1: bound leg with staged rows left must publish before this seal
+    // takes the next ticket round — optional ticketNumber must not be required.
+    relocateTicketProgressForLeg({ runDirectory }, undefined, rows);
     round = nextRoundFromLines(readTicketProgressLines(subjectDirectory), input.role, lens);
   }
 
