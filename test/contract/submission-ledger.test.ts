@@ -102,7 +102,7 @@ async function ledgerRecords(root: string): Promise<SitianRecord[]> {
   const files = await readdir(`${root}/.ak-roles/books`, { recursive: true });
   const records: SitianRecord[] = [];
   for (const relative of files.filter((file) => file.endsWith(".jsonl"))) {
-    records.push(...(await readSitianRecords(`${root}/.ak-roles/books/${relative}`)).records.filter((record) => ["roundContext", "candidate", "outcome", "sealed"].includes(record.kind)));
+    records.push(...(await readSitianRecords(`${root}/.ak-roles/books/${relative}`)).records.filter((record) => ["candidate", "outcome", "sealed"].includes(record.kind)));
   }
   return records.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
 }

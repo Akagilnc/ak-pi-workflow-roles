@@ -96,7 +96,6 @@ async function seedBookTicketRun(input: {
       role: "coder",
       status: "completed",
       decisiveFacts: {},
-      // Readable report needs payloads or attemptHistoryIdentity (#1161 R2-gap).
       payloads: [],
     },
   });

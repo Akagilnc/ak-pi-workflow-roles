@@ -1,7 +1,7 @@
 /**
  * #813: ACP last-mile resumes with shared-envelope retry.message.
- * Fake ACP connection only — single process. The host books its turn-delivery
- * record on the run, so the run directory is a real temp ledger run (#1161).
+ * Fake ACP connection only — single process. Each start re-resolves the leg's
+ * placement under the ledger home, so the run directory is a real temp ledger run (#1161).
  * Headless dual-entry proof: test/integration/host-retry-verdict-relay.test.ts (#820).
  */
 import assert from "node:assert/strict";
