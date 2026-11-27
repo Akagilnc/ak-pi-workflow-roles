@@ -466,18 +466,17 @@ export function relocateTicketProgressForLeg(input: {
   // Receipt path is the seal identity. Append-then-carry partial success must
   // not reassign rounds or re-append the same originals on re-entry (#1199 F2).
   const published = new Map(ticketLines.map(line => [line.receipt, line]));
-  for (const line of mine) {
-    if (published.has(line.receipt)) continue;
+  const pending = mine.filter(line => !published.has(line.receipt));
+  if (pending.length > 0) {
     // Current unbound staging publishes empty rounds; lens comes only from this
-    // leg's admitted page. No legacy staged-round mirror-suffix branch.
-    const lens = lensFromRunDirectory(input.runDirectory, line.seat, rows);
-    const round = nextRoundFromLines(ticketLines, line.seat, lens);
-    const moved = { ...line, round };
-    published.set(line.receipt, moved);
-    ticketLines.push(moved);
-  }
-
-  if (ticketLines.length > priorCount) {
+    // leg's admitted page, taken once: a leg has one seat. No legacy staged-round
+    // mirror-suffix branch.
+    const lens = lensFromRunDirectory(input.runDirectory, pending[0]!.seat, rows);
+    for (const line of pending) {
+      const moved = { ...line, round: nextRoundFromLines(ticketLines, line.seat, lens) };
+      published.set(line.receipt, moved);
+      ticketLines.push(moved);
+    }
     const newCurrent = join(subjectDirectory, CURRENT_FILENAME);
     mkdirSync(dirname(newCurrent), { recursive: true });
     appendFileSync(newCurrent, `${ticketLines.slice(priorCount).map(line => JSON.stringify(line)).join("\n")}\n`, "utf8");
