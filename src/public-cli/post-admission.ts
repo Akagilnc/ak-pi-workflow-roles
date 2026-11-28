@@ -74,7 +74,6 @@ import {
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
-  type CurrentCourtState,
   type RunWriterLease,
 } from "./run-lifecycle.ts";
 import {
@@ -1662,13 +1661,7 @@ export async function runPostAdmissionSeatResume<
               : randomUUID());
           turnRequest = { ...turnRequest, courtAttemptId };
           if (openCourtAttemptId === undefined) {
-            const court: CurrentCourtState = {
-              courtAttemptId,
-              ...(request.summons === undefined
-                ? {}
-                : { summons: request.summons }),
-            };
-            await recordCurrentCourt(admittedForBuild.runDirectory, court);
+            await recordCurrentCourt(admittedForBuild.runDirectory, { courtAttemptId });
           }
         }
     return turnRequest;

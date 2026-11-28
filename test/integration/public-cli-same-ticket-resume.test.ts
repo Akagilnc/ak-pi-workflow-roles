@@ -23,7 +23,7 @@ import {
   sessionFaultNotes,
   RUN_DIRECTORY_BOUND_AT_REST_ENTRIES,
 } from "../helpers/run-dossier-fixture.ts";
-import { readPageSync } from "../../src/run-dossier.ts";
+import { readPageSync, writeSectionSync } from "../../src/run-dossier.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { submitInPiChild } from "../helpers/submission-ledger-fixture.ts";
@@ -653,6 +653,16 @@ test("#637/#987 public inspector: resume continues open-court settlement without
     await writeFile(external, "external-changed-after-admit\n", "utf8");
     await rm(external, { force: true });
 
+    // #1311: legs written before the upgrade still carry that court's summons materials on
+    // the run-state page (the shape the package used to write); they resume and settle alike.
+    writeSectionSync(runDirectory, "runState", {
+      ...readPageSync(runDirectory, "runState"),
+      currentCourt: {
+        courtAttemptId: openCourtAttemptId,
+        summons: { instruction: "", instructionEmpty: true, attachmentPaths: [external], sourceRunPath: parentRunPath },
+      },
+    });
+
     // 4) Resume with a caller message continues the still-open no-seal court
     // and this turn seals it.
     const resumed = await runAkRole(["resume", "637", "inspector", "caller-resume-message"], {
@@ -1130,6 +1140,14 @@ test("#993 public coder: post-submission Inspector bounce resumes same run, then
   assert.equal(first.terminal.roleOutcome.kind, "accepted");
   assert.equal(officerRequests.length, 2);
   assert.equal(coderTurns, 2);
+  // #1311: the gate's second summons continues the same inspector leg in a new court; the
+  // run-state pages written while that court is open carry its attempt id and nothing else.
+  assert.equal(officerRequests[1]!.runDirectory, officerRequests[0]!.runDirectory);
+  assert.equal(officerRequests[1]!.continuation.kind, "resume");
+  const openCourtPages = statePayloads(officerRequests[1]!.runDirectory, "run-state")
+    .flatMap((page) => page.currentCourt === undefined ? [] : [page.currentCourt]);
+  assert.ok(openCourtPages.length > 0);
+  assert.deepEqual(openCourtPages, openCourtPages.map(() => ({ courtAttemptId: officerRequests[1]!.courtAttemptId })));
   // At rest after bounce -> resume -> accepted: bound leg dossier + leg-local
   // receipts/session (#1161/#1168/#1199). No task.md, artifacts/, stderr.log,
   // headless-*, run-state / invocation / admitted-request json or .run-starts.
