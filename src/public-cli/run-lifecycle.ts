@@ -107,12 +107,10 @@ export type PublicResumeRequest = {
 /**
  * Open court turn on a retained run (#637).
  * courtAttemptId identifies settlement across later public manual resume calls.
- * Summons materials belong only to the internal re-summons face.
  * Cleared when this courtAttemptId seals.
  */
 export type CurrentCourtState = {
   readonly courtAttemptId: string;
-  readonly summons?: SameTicketSummonsMaterials;
 };
 
 /**
@@ -162,70 +160,13 @@ type RoleRunStateDisk = {
   readonly currentCourt?: CurrentCourtState;
 };
 
-function parseSameTicketSummonsMaterials(
-  raw: unknown,
-): SameTicketSummonsMaterials | undefined {
-  if (!isRecord(raw)) return undefined;
-  const record = raw;
-  const instruction =
-    typeof record.instruction === "string" ? record.instruction : undefined;
-  const instructionEmpty =
-    typeof record.instructionEmpty === "boolean" ? record.instructionEmpty : undefined;
-  const attachmentPaths = Array.isArray(record.attachmentPaths)
-    ? record.attachmentPaths.filter((p): p is string => typeof p === "string")
-    : undefined;
-  const sourceRunPath = admittedSourceRunPath(record);
-  let sourceRun: NotarySourceRunLocator | undefined;
-  if (
-    isRecord(record.sourceRun)
-  ) {
-    const sr = record.sourceRun as Record<string, unknown>;
-    if (
-      typeof sr.runId === "string" &&
-      sr.runId.trim() !== "" &&
-      typeof sr.role === "string" &&
-      sr.role.trim() !== "" &&
-      typeof sr.runDirectory === "string" &&
-      sr.runDirectory.trim() !== ""
-    ) {
-      sourceRun = {
-        runId: sr.runId,
-        role: sr.role,
-        runDirectory: sr.runDirectory,
-      };
-    }
-  }
-  if (
-    instruction === undefined &&
-    instructionEmpty === undefined &&
-    (attachmentPaths === undefined || attachmentPaths.length === 0) &&
-    sourceRunPath === undefined &&
-    sourceRun === undefined
-  ) {
-    return undefined;
-  }
-  return {
-    ...(instruction === undefined ? {} : { instruction }),
-    ...(instructionEmpty === undefined ? {} : { instructionEmpty }),
-    ...(attachmentPaths === undefined || attachmentPaths.length === 0
-      ? {}
-      : { attachmentPaths }),
-    ...(sourceRunPath === undefined ? {} : { sourceRunPath }),
-    ...(sourceRun === undefined ? {} : { sourceRun }),
-  };
-}
-
 function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
   if (!isRecord(raw)) return undefined;
   const record = raw;
   if (typeof record.courtAttemptId !== "string" || record.courtAttemptId.length === 0) {
     return undefined;
   }
-  const summons = parseSameTicketSummonsMaterials(record.summons);
-  return {
-    courtAttemptId: record.courtAttemptId,
-    ...(summons === undefined ? {} : { summons }),
-  };
+  return { courtAttemptId: record.courtAttemptId };
 }
 
 async function readRoleRunStateRaw(runDirectory: string): Promise<unknown | undefined> {
@@ -482,7 +423,7 @@ export async function readCurrentCourt(
   return current?.currentCourt;
 }
 
-/** Persist the open court turn identity + materials (#637). */
+/** Persist the open court turn identity (#637). */
 export async function recordCurrentCourt(
   runDirectory: string,
   court: CurrentCourtState,
